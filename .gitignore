@@ -150,6 +150,8 @@ activemq-data/
 # Environments
 .env
 .envrc
+.env.local
+*.env
 .venv
 env/
 venv/
@@ -216,3 +218,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+ 
+# Misc
+.DS_Store
+
+# Google service account key - NEVER commit this
+*service-account*.json
+*credentials*.json
