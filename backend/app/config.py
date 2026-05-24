@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     google_drive_folder_id: str
 
     # LangSmith
-    langchain_api_key: str = ""
-    langchain_tracing_v2: str = "false"
-    langchain_project: str = "portfolio-rag"
+    langsmith_api_key: str = ""
+    langsmith_tracing: str = "false"
+    langsmith_project: str = "portfolio-rag"
 
     # App
     environment: str = "development"

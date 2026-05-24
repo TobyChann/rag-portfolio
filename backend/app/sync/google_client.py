@@ -28,13 +28,32 @@ def get_docs_service():
 
 
 def list_docs_in_folder(folder_id: str) -> list[dict]:
-    """Return list of {id, name, modifiedTime} for all Docs in the folder."""
+    """
+    Recursively find all Google Docs in a folder and all its subfolders.
+    Returns list of {id, name, modifiedTime}.
+    """
     service = get_drive_service()
+    return _recursive_list(service, folder_id)
+
+
+def _recursive_list(service, folder_id: str) -> list[dict]:
+    docs = []
+
+    # Get all items in this folder
     results = service.files().list(
-        q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false",
-        fields="files(id, name, modifiedTime)",
+        q=f"'{folder_id}' in parents and trashed=false",
+        fields="files(id, name, mimeType, modifiedTime)",
     ).execute()
-    return results.get("files", [])
+
+    for item in results.get("files", []):
+        if item["mimeType"] == "application/vnd.google-apps.document":
+            # It's a Doc — add it
+            docs.append(item)
+        elif item["mimeType"] == "application/vnd.google-apps.folder":
+            # It's a subfolder — recurse into it
+            docs.extend(_recursive_list(service, item["id"]))
+
+    return docs
 
 
 def export_doc_as_pdf(doc_id: str) -> bytes:
