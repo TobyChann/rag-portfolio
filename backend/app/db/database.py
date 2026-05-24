@@ -4,10 +4,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# Convert postgres:// to postgresql+asyncpg://
 db_url = settings.database_url.replace("://", "+asyncpg://", 1)
 
-engine = create_async_engine(db_url, echo=settings.environment == "development")
+# Handle Supabase SSL requirement
+ssl_required = "ssl=require" in db_url
+db_url = db_url.replace("?ssl=require", "").replace("&ssl=require", "")
+
+engine = create_async_engine(
+    db_url,
+    echo=settings.environment == "development",
+    connect_args={
+        "ssl": "require",
+        "statement_cache_size": 0,  # required for Supabase session pooler
+    } if ssl_required else {"statement_cache_size": 0},
+)
+
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
