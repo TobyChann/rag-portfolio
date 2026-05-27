@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -8,13 +9,26 @@ from app.api import query, webhook, admin, health
 
 settings = get_settings()
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://frontend:3000",          # docker service name
+    "https://your-vercel-app.vercel.app",  # update after deploy
+]
+
+# In dev, allow all origins so you never fight CORS while building
+if settings.environment == "development":
+    ALLOWED_ORIGINS = ["*"]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    await init_db()
+    try:
+        await init_db()
+        print("[startup] Database tables ready")
+    except Exception as e:
+        print(f"[startup] DB init failed: {e} — continuing anyway")
     yield
-    # Shutdown (cleanup if needed)
 
 
 app = FastAPI(
@@ -26,8 +40,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://your-vercel-app.vercel.app"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=ALLOWED_ORIGINS != ["*"],  # credentials not allowed with wildcard
     allow_methods=["*"],
     allow_headers=["*"],
 )
