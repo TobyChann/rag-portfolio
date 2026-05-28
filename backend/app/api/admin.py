@@ -1,29 +1,111 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+import os
+import hashlib
+import secrets
+import json
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.database import get_db
 from app.db.crud import get_stats
+from app.cache.redis_client import get_redis
+from app.sync.ingestion import ingest_all_documents, ingest_document
 from app.config import get_settings
-import os
 
 router = APIRouter()
 settings = get_settings()
 
-# Simple token auth for admin routes
-# Set ADMIN_SECRET in your .env
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "change-me-in-production")
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
+SESSION_TTL = 60 * 60 * 24 * 30  # 30 days — survives docker restarts
+ADMIN_COOKIE = "admin_session"
 
 
-def verify_admin(x_admin_secret: str = Header(None)):
-    if x_admin_secret != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
-@router.get("/stats", dependencies=[Depends(verify_admin)])
+async def require_admin(request: Request):
+    r = await get_redis()
+    token = request.cookies.get(ADMIN_COOKIE)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    valid = await r.get(f"admin_session:{token}")
+    if not valid:
+        raise HTTPException(status_code=401, detail="Session expired")
+    return token
+
+
+# ── Auth ────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/login")
+async def login(req: LoginRequest, response: Response):
+    expected = os.getenv("ADMIN_PASSWORD_HASH", "")
+    if not expected or _hash_password(req.password) != expected:
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    token = secrets.token_hex(32)
+    r = await get_redis()
+    await r.setex(f"admin_session:{token}", SESSION_TTL, "1")
+
+    response.set_cookie(
+        key=ADMIN_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=settings.environment != "development",
+        max_age=SESSION_TTL,
+    )
+    return {"ok": True}
+
+
+@router.post("/logout")
+async def logout(request: Request, response: Response):
+    token = request.cookies.get(ADMIN_COOKIE)
+    if token:
+        r = await get_redis()
+        await r.delete(f"admin_session:{token}")
+    response.delete_cookie(ADMIN_COOKIE)
+    return {"ok": True}
+
+
+@router.get("/me")
+async def me(token: str = Depends(require_admin)):
+    return {"authenticated": True}
+
+
+@router.post("/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    token: str = Depends(require_admin),
+):
+    expected = os.getenv("ADMIN_PASSWORD_HASH", "")
+    if _hash_password(req.current_password) != expected:
+        raise HTTPException(status_code=401, detail="Current password incorrect")
+
+    # Print new hash — admin copies this into .env and restarts
+    new_hash = _hash_password(req.new_password)
+    print(f"[admin] New password hash: {new_hash}")
+    print(f"[admin] Set ADMIN_PASSWORD_HASH={new_hash} in your .env and restart")
+    return {
+        "message": "Copy this hash into ADMIN_PASSWORD_HASH in your .env and restart the backend",
+        "new_hash": new_hash,
+    }
+
+
+# ── Stats ────────────────────────────────────────────
+
+@router.get("/stats", dependencies=[Depends(require_admin)])
 async def admin_stats(db: AsyncSession = Depends(get_db)):
-    """
-    Dashboard stats: query counts, visitor breakdown, recent questions.
-    Protected by X-Admin-Secret header.
-    """
     stats = await get_stats(db)
     return {
         "total_queries": stats["total_queries"],
@@ -43,3 +125,19 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
             for q in stats["recent_queries"]
         ],
     }
+
+
+# ── Ingestion controls ────────────────────────────────
+
+@router.post("/ingest/all", dependencies=[Depends(require_admin)])
+async def ingest_all():
+    """Manually trigger full re-ingestion of all Notes_ docs."""
+    results = await ingest_all_documents()
+    return {"ingested": len(results), "results": results}
+
+
+@router.post("/ingest/doc/{doc_id}", dependencies=[Depends(require_admin)])
+async def ingest_one(doc_id: str):
+    """Re-ingest a single document by Google Doc ID."""
+    result = await ingest_document(doc_id)
+    return result

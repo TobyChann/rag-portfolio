@@ -2,7 +2,9 @@
 import { useState, useRef, useEffect } from "react";
 import { onboard, sendQuery, sendFeedback } from "@/lib/api";
 import { Message, VisitorRole, Industry } from "@/types";
-import { nanoid } from "nanoid";
+
+let _id = 0;
+const uid = () => String(++_id);
 
 const SUGGESTED = [
   "What databases have you worked with?",
@@ -12,30 +14,64 @@ const SUGGESTED = [
 ];
 
 const ROLES: { value: VisitorRole; label: string }[] = [
-  { value: "recruiter", label: "Recruiter" },
-  { value: "hiring_manager", label: "Hiring manager" },
-  { value: "peer", label: "Peer / developer" },
-  { value: "curious", label: "Just curious" },
+  { value: "recruiter",        label: "Recruiter" },
+  { value: "hiring_manager",   label: "Hiring manager" },
+  { value: "peer",             label: "Peer / developer" },
+  { value: "curious",          label: "Just curious" },
 ];
 
 const INDUSTRIES: Industry[] = ["Tech", "Finance", "Government", "Healthcare", "Other"];
 
+/* ── inline styles using design tokens ── */
+const S = {
+  fab: {
+    position: "fixed" as const, bottom: 24, right: 24,
+    width: 48, height: 48, borderRadius: "50%",
+    background: "var(--accent)", color: "#fff",
+    border: "none", cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    boxShadow: "0 4px 16px rgba(0,0,0,.18)",
+    zIndex: 50, fontSize: 20,
+    transition: "background .15s, transform .1s",
+  },
+  panel: {
+    position: "fixed" as const, bottom: 24, right: 24,
+    width: 300, background: "var(--bg)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-lg)",
+    boxShadow: "0 8px 32px rgba(0,0,0,.12)",
+    display: "flex", flexDirection: "column" as const,
+    overflow: "hidden", zIndex: 50, maxHeight: 520,
+  },
+  header: {
+    background: "var(--accent)", padding: "12px 16px",
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+  },
+  msgBot: {
+    background: "var(--bg-secondary)", color: "var(--fg)",
+    fontSize: 12, padding: "8px 11px", borderRadius: "var(--radius-md)",
+    maxWidth: "90%", lineHeight: 1.6, alignSelf: "flex-start",
+  },
+  msgUser: {
+    background: "var(--accent)", color: "#fff",
+    fontSize: 12, padding: "8px 11px", borderRadius: "var(--radius-md)",
+    maxWidth: "90%", lineHeight: 1.6, alignSelf: "flex-end",
+  },
+};
+
 export default function Chatbot() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen]           = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [role, setRole] = useState<VisitorRole | null>(null);
-  const [industry, setIndustry] = useState<Industry | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [role, setRole]           = useState<VisitorRole | null>(null);
+  const [industry, setIndustry]   = useState<Industry | null>(null);
+  const [messages, setMessages]   = useState<Message[]>([]);
+  const [input, setInput]         = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState("");
+  const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // Restore session from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem("portfolio_session");
     if (stored) setSessionId(stored);
@@ -48,112 +84,94 @@ export default function Chatbot() {
       const { session_id } = await onboard(role, industry, ref);
       setSessionId(session_id);
       localStorage.setItem("portfolio_session", session_id);
-      setMessages([{
-        id: nanoid(),
-        role: "assistant",
-        content: "Hi! Ask me anything about the candidate's skills, coursework, or projects.",
-      }]);
-    } catch {
-      setError("Something went wrong. Please try again.");
-    }
+      setMessages([{ id: uid(), role: "assistant", content: "Hi! Ask me anything about the candidate's skills, coursework, or projects." }]);
+    } catch { setError("Something went wrong. Please try again."); }
   }
 
   async function handleSend(text?: string) {
-    const question = text || input.trim();
-    if (!question || !sessionId || loading) return;
-    setInput("");
-    setError("");
-
-    const userMsg: Message = { id: nanoid(), role: "user", content: question };
-    setMessages(prev => [...prev, userMsg]);
+    const q = text || input.trim();
+    if (!q || !sessionId || loading) return;
+    setInput(""); setError("");
+    setMessages(p => [...p, { id: uid(), role: "user", content: q }]);
     setLoading(true);
-
     try {
-      const result = await sendQuery(question, sessionId);
-      setMessages(prev => [...prev, {
-        id: nanoid(),
-        role: "assistant",
-        content: result.answer,
-        queryId: result.query_id,
-        feedback: null,
-        responseMs: result.response_ms,
-      }]);
+      const res = await sendQuery(q, sessionId);
+      setMessages(p => [...p, { id: uid(), role: "assistant", content: res.answer, queryId: res.query_id, feedback: null }]);
     } catch (e: any) {
       setError(e.message || "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
-  async function handleFeedback(msgId: string, queryId: string, value: 1 | -1) {
-    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, feedback: value } : m));
-    await sendFeedback(queryId, value);
+  async function handleFeedback(msgId: string, queryId: string, val: 1 | -1) {
+    setMessages(p => p.map(m => m.id === msgId ? { ...m, feedback: val } : m));
+    await sendFeedback(queryId, val);
   }
 
   return (
     <>
-      {/* FAB */}
       {!open && (
         <button
+          style={S.fab}
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 w-12 h-12 rounded-full bg-gray-900 text-white flex items-center justify-center shadow-lg hover:bg-gray-700 transition-colors z-50"
           aria-label="Open chat"
-        >
-          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
+          onMouseEnter={e => (e.currentTarget.style.background = "var(--accent-hover)")}
+          onMouseLeave={e => (e.currentTarget.style.background = "var(--accent)")}
+        >💬</button>
       )}
 
-      {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-6 right-6 w-80 bg-white border border-gray-200 rounded-2xl shadow-xl flex flex-col overflow-hidden z-50" style={{ maxHeight: "520px" }}>
+        <div style={S.panel}>
           {/* Header */}
-          <div className="bg-gray-900 px-4 py-3 flex justify-between items-center">
+          <div style={S.header}>
             <div>
-              <p className="text-white text-sm font-medium">Ask about my profile</p>
-              <p className="text-gray-400 text-xs">Powered by RAG</p>
+              <p style={{ color:"#fff", fontSize:13, fontWeight:600 }}>Ask about my profile</p>
+              <p style={{ color:"rgba(255,255,255,.7)", fontSize:11, marginTop:1 }}>Powered by RAG</p>
             </div>
-            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white text-lg leading-none">×</button>
+            <button onClick={() => setOpen(false)} style={{ background:"none", border:"none", color:"rgba(255,255,255,.8)", cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
           </div>
 
-          {/* Onboarding gate */}
+          {/* Onboarding */}
           {!sessionId ? (
-            <div className="p-4 flex flex-col gap-3">
-              <p className="text-xs text-gray-500">Quick intro before we start:</p>
+            <div style={{ padding:16, display:"flex", flexDirection:"column", gap:14, overflowY:"auto" }}>
+              <p style={{ fontSize:12, color:"var(--fg-muted)" }}>Quick intro before we start:</p>
+
               <div>
-                <p className="text-xs font-medium text-gray-700 mb-1">Who are you?</p>
-                <div className="grid grid-cols-2 gap-1.5">
+                <p style={{ fontSize:12, fontWeight:600, marginBottom:8 }}>Who are you?</p>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
                   {ROLES.map(r => (
-                    <button
-                      key={r.value}
-                      onClick={() => setRole(r.value)}
-                      className={`text-xs py-1.5 px-2 rounded-lg border transition-colors ${role === r.value ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-400"}`}
-                    >
-                      {r.label}
-                    </button>
+                    <button key={r.value} onClick={() => setRole(r.value)} style={{
+                      fontSize:12, padding:"7px 10px", borderRadius:"var(--radius-sm)",
+                      border: `1px solid ${role===r.value ? "var(--accent)" : "var(--border)"}`,
+                      background: role===r.value ? "var(--accent-light)" : "var(--bg)",
+                      color: role===r.value ? "var(--accent-text)" : "var(--fg-muted)",
+                      cursor:"pointer", transition:"all .15s",
+                    }}>{r.label}</button>
                   ))}
                 </div>
               </div>
+
               <div>
-                <p className="text-xs font-medium text-gray-700 mb-1">Your industry?</p>
-                <div className="flex flex-wrap gap-1.5">
+                <p style={{ fontSize:12, fontWeight:600, marginBottom:8 }}>Your industry?</p>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                   {INDUSTRIES.map(ind => (
-                    <button
-                      key={ind}
-                      onClick={() => setIndustry(ind)}
-                      className={`text-xs py-1 px-2.5 rounded-full border transition-colors ${industry === ind ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-400"}`}
-                    >
-                      {ind}
-                    </button>
+                    <button key={ind} onClick={() => setIndustry(ind)} style={{
+                      fontSize:11, padding:"4px 12px", borderRadius:20,
+                      border: `1px solid ${industry===ind ? "var(--accent)" : "var(--border)"}`,
+                      background: industry===ind ? "var(--accent-light)" : "var(--bg)",
+                      color: industry===ind ? "var(--accent-text)" : "var(--fg-muted)",
+                      cursor:"pointer", transition:"all .15s",
+                    }}>{ind}</button>
                   ))}
                 </div>
               </div>
-              {error && <p className="text-xs text-red-500">{error}</p>}
+
+              {error && <p style={{ fontSize:12, color:"#DC2626" }}>{error}</p>}
+
               <button
                 onClick={handleOnboard}
                 disabled={!role || !industry}
-                className="text-sm py-2 rounded-lg bg-gray-900 text-white disabled:opacity-40 hover:bg-gray-700 transition-colors"
+                className="btn btn-primary"
+                style={{ opacity: (!role || !industry) ? 0.4 : 1 }}
               >
                 Start chatting →
               </button>
@@ -161,72 +179,71 @@ export default function Chatbot() {
           ) : (
             <>
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2 min-h-0">
+              <div style={{ flex:1, overflowY:"auto", padding:12, display:"flex", flexDirection:"column", gap:8, minHeight:0 }}>
                 {messages.map(msg => (
-                  <div key={msg.id} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
-                    <div className={`text-xs px-3 py-2 rounded-xl max-w-[90%] leading-relaxed ${msg.role === "user" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-800"}`}>
-                      {msg.content}
-                    </div>
-                    {/* Feedback buttons on assistant messages */}
-                    {msg.role === "assistant" && msg.queryId && (
-                      <div className="flex gap-1 mt-1">
-                        <button
-                          onClick={() => handleFeedback(msg.id, msg.queryId!, 1)}
-                          className={`text-xs px-1.5 py-0.5 rounded transition-colors ${msg.feedback === 1 ? "text-green-600" : "text-gray-300 hover:text-gray-500"}`}
-                        >
-                          👍
-                        </button>
-                        <button
-                          onClick={() => handleFeedback(msg.id, msg.queryId!, -1)}
-                          className={`text-xs px-1.5 py-0.5 rounded transition-colors ${msg.feedback === -1 ? "text-red-500" : "text-gray-300 hover:text-gray-500"}`}
-                        >
-                          👎
-                        </button>
+                  <div key={msg.id} style={{ display:"flex", flexDirection:"column", alignItems: msg.role==="user" ? "flex-end" : "flex-start" }}>
+                    <div style={msg.role==="user" ? S.msgUser : S.msgBot}>{msg.content}</div>
+                    {msg.role==="assistant" && msg.queryId && (
+                      <div style={{ display:"flex", gap:4, marginTop:4 }}>
+                        {([1,-1] as const).map(v => (
+                          <button key={v} onClick={() => handleFeedback(msg.id, msg.queryId!, v)}
+                            style={{
+                              background:"none", border:"none", cursor:"pointer", fontSize:13,
+                              opacity: msg.feedback===v ? 1 : 0.35,
+                              transition:"opacity .15s",
+                            }}
+                          >{v===1?"👍":"👎"}</button>
+                        ))}
                       </div>
                     )}
                   </div>
                 ))}
                 {loading && (
-                  <div className="flex items-start">
-                    <div className="bg-gray-100 text-gray-400 text-xs px-3 py-2 rounded-xl">Thinking…</div>
+                  <div style={S.msgBot}>
+                    <span style={{ opacity:.5 }}>Thinking…</span>
                   </div>
                 )}
-                {error && <p className="text-xs text-red-500 text-center">{error}</p>}
-                <div ref={messagesEndRef} />
+                {error && <p style={{ fontSize:12, color:"#DC2626", textAlign:"center" }}>{error}</p>}
+                <div ref={endRef} />
               </div>
 
-              {/* Suggested questions (only when no messages yet) */}
+              {/* Suggestions */}
               {messages.length <= 1 && (
-                <div className="px-3 pb-2 flex flex-col gap-1">
+                <div style={{ padding:"0 10px 8px", display:"flex", flexDirection:"column", gap:5 }}>
                   {SUGGESTED.map(q => (
-                    <button
-                      key={q}
-                      onClick={() => handleSend(q)}
-                      className="text-left text-xs py-1.5 px-2.5 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors"
-                    >
-                      {q}
-                    </button>
+                    <button key={q} onClick={() => handleSend(q)} style={{
+                      textAlign:"left", fontSize:11, padding:"6px 10px",
+                      border:"1px solid var(--border)", borderRadius:"var(--radius-sm)",
+                      background:"var(--bg)", color:"var(--fg-muted)", cursor:"pointer",
+                      transition:"border-color .15s, color .15s",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor="var(--accent)"; e.currentTarget.style.color="var(--fg)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor="var(--border)"; e.currentTarget.style.color="var(--fg-muted)"; }}
+                    >{q}</button>
                   ))}
                 </div>
               )}
 
-              {/* Input */}
-              <div className="flex gap-2 p-3 border-t border-gray-100">
+              {/* Input row */}
+              <div style={{ display:"flex", gap:8, padding:"8px 10px", borderTop:"1px solid var(--border)" }}>
                 <input
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && handleSend()}
+                  onKeyDown={e => e.key==="Enter" && handleSend()}
                   placeholder="Ask something…"
-                  className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-gray-400"
                   disabled={loading}
+                  style={{
+                    flex:1, fontSize:12, padding:"7px 10px",
+                    border:"1px solid var(--border)", borderRadius:"var(--radius-sm)",
+                    background:"var(--bg)", color:"var(--fg)", outline:"none",
+                  }}
                 />
                 <button
                   onClick={() => handleSend()}
                   disabled={loading || !input.trim()}
-                  className="bg-gray-900 text-white rounded-lg px-3 py-2 text-xs disabled:opacity-40 hover:bg-gray-700 transition-colors"
-                >
-                  Send
-                </button>
+                  className="btn btn-primary"
+                  style={{ padding:"7px 12px", fontSize:12, opacity: (loading||!input.trim()) ? 0.4 : 1 }}
+                >→</button>
               </div>
             </>
           )}

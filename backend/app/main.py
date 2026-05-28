@@ -9,16 +9,14 @@ from app.api import query, webhook, admin, health
 
 settings = get_settings()
 
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://frontend:3000",          # docker service name
-    "https://your-vercel-app.vercel.app",  # update after deploy
-]
-
-# In dev, allow all origins so you never fight CORS while building
-if settings.environment == "development":
-    ALLOWED_ORIGINS = ["*"]
+# Dev: allow all. Prod: explicit list only.
+ALLOWED_ORIGINS = (
+    ["*"] if settings.environment == "development"
+    else [
+        "http://localhost:3000",
+        "https://your-vercel-app.vercel.app",
+    ]
+)
 
 
 @asynccontextmanager
@@ -33,7 +31,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Portfolio RAG API",
-    description="RAG-powered portfolio chatbot backend",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -41,7 +38,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=ALLOWED_ORIGINS != ["*"],  # credentials not allowed with wildcard
+    allow_credentials=ALLOWED_ORIGINS != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
