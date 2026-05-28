@@ -141,3 +141,38 @@ async def ingest_one(doc_id: str):
     """Re-ingest a single document by Google Doc ID."""
     result = await ingest_document(doc_id)
     return result
+
+
+# ── Content editing ──────────────────────────────────────
+
+class ContentPatch(BaseModel):
+    section: str
+    field: str
+    value: str
+
+
+@router.patch("/content", dependencies=[Depends(require_admin)])
+async def patch_content(req: ContentPatch):
+    """
+    Save inline edits from the home page edit mode.
+    Stores in Redis for now — replace with Supabase for persistence across restarts.
+    """
+    r = await get_redis()
+    key = f"content:{req.section}:{req.field}"
+    await r.set(key, req.value)
+    return {"ok": True}
+
+
+@router.get("/content")
+async def get_content():
+    """Return all saved content overrides."""
+    r = await get_redis()
+    keys = await r.keys("content:*")
+    result = {}
+    for key in keys:
+        _, section, field = key.split(":", 2)
+        val = await r.get(key)
+        if section not in result:
+            result[section] = {}
+        result[section][field] = val
+    return result
