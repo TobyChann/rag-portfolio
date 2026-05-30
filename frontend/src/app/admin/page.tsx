@@ -25,6 +25,8 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
   const [ingestLog, setIngestLog] = useState("");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<{ done: number; total: number; current: string } | null>(null);
   const [tab, setTab] = useState<"dashboard" | "ingest" | "settings">("dashboard");
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -64,16 +66,37 @@ export default function AdminPage() {
 
   async function handleIngestAll() {
     setIngesting(true);
-    setIngestLog("Starting ingestion of all Notes_ documents...");
+    setIngestLog("");
+    setJobProgress(null);
     try {
       const res = await fetch(`${API}/admin/ingest/all`, { method: "POST", credentials: "include" });
-      const data = await res.json();
-      setIngestLog(`Done. Ingested ${data.ingested} documents.\n\n${data.results?.map((r: any) => `${r.title}: ${r.chunk_count} chunks (${r.elapsed_ms}ms)`).join("\n") || ""}`);
-    } catch {
-      setIngestLog("Error during ingestion. Check backend logs.");
-    } finally {
+      if (!res.ok) throw new Error(await res.text());
+      const { job_id } = await res.json();
+      setJobId(job_id);
+      localStorage.setItem("ingest_job_id", job_id);
+      // Poll for progress
+      const poll = setInterval(async () => {
+        try {
+          const sr = await fetch(`${API}/admin/ingest/status/${job_id}`, { credentials: "include" });
+          const status = await sr.json();
+          setJobProgress({ done: status.done, total: status.total, current: status.current });
+          if (status.status === "done") {
+            clearInterval(poll);
+            setIngesting(false);
+            setIngestLog(`Done. ${status.done} documents ingested.\n\n${status.results.map((r: any) => `${r.title}: ${r.chunks} chunks (${r.ms}ms)`).join("\n")}`);
+            setJobProgress(null);
+            loadStats();
+          } else if (status.status === "error") {
+            clearInterval(poll);
+            setIngesting(false);
+            setIngestLog(`Error: ${status.error}`);
+            setJobProgress(null);
+          }
+        } catch { clearInterval(poll); setIngesting(false); }
+      }, 2000);
+    } catch (e: any) {
+      setIngestLog(`Error: ${e.message}`);
       setIngesting(false);
-      loadStats();
     }
   }
 
@@ -227,10 +250,32 @@ export default function AdminPage() {
               onClick={handleIngestAll}
               disabled={ingesting}
               className="btn btn-primary"
-              style={{ opacity: ingesting ? 0.5 : 1 }}
+              style={{ opacity: ingesting ? 0.6 : 1 }}
             >
-              {ingesting ? "Ingesting..." : "Ingest all Notes_ documents"}
+              {ingesting ? "Running in background…" : "Ingest all Notes_ documents"}
             </button>
+
+            {jobProgress && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+                    {jobProgress.current ? `Processing: ${jobProgress.current}` : "Starting…"}
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>
+                    {jobProgress.done} / {jobProgress.total || "?"}
+                  </span>
+                </div>
+                <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%",
+                    width: jobProgress.total ? `${(jobProgress.done / jobProgress.total) * 100}%` : "0%",
+                    background: "var(--accent)",
+                    borderRadius: 3,
+                    transition: "width 0.4s ease",
+                  }} />
+                </div>
+              </div>
+            )}
           </div>
 
           <div style={{

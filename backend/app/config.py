@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     langsmith_tracing: str = "false"
     langsmith_project: str = "portfolio-rag"
 
+    # Huggingface
+    hf_token: str = ""
+
     # Admin
     admin_password_hash: str = ""
 

@@ -162,7 +162,6 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
           <img
             src={src}
             alt={alt}
-            className="fade-in"
             draggable={false}
             style={{
               maxWidth: "92vw", maxHeight: "88vh",

@@ -5,6 +5,7 @@ import "./globals.css";
 import NavBar from "@/components/portfolio/NavBar";
 import Footer from "@/components/portfolio/Footer";
 import Chatbot from "@/components/chat/Chatbot";
+import IngestProgressToast from "@/components/ui/IngestProgressToast";
 
 export const metadata: Metadata = {
   title: "My Portfolio",
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         <Footer />
         <Chatbot />
+        <IngestProgressToast />
       </body>
     </html>
   );

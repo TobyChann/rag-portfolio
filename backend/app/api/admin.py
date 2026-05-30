@@ -1,17 +1,23 @@
 import os
+import asyncio
 import hashlib
 import secrets
 import json
 from datetime import datetime, timedelta
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.database import get_db
 from app.db.crud import get_stats
+from app.db.models import Course
 from app.cache.redis_client import get_redis
-from app.sync.ingestion import ingest_all_documents, ingest_document
+from app.sync.ingestion import ingest_document, list_documents
 from app.config import get_settings
+
+_jobs: dict = {}  # in-process job tracker
 
 router = APIRouter()
 settings = get_settings()
@@ -129,18 +135,44 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
 
 # ── Ingestion controls ────────────────────────────────
 
+async def _run_ingest_job(job_id: str):
+    try:
+        docs = await list_documents()
+        _jobs[job_id]["total"] = len(docs)
+        for doc in docs:
+            _jobs[job_id]["current"] = doc["name"]
+            result = await ingest_document(doc["id"], doc["name"])
+            _jobs[job_id]["done"] += 1
+            _jobs[job_id]["results"].append({"title": result["title"], "chunks": result["chunk_count"], "ms": result["elapsed_ms"]})
+        _jobs[job_id]["status"] = "done"
+    except Exception as e:
+        _jobs[job_id]["status"] = "error"
+        _jobs[job_id]["error"] = str(e)
+
+
 @router.post("/ingest/all", dependencies=[Depends(require_admin)])
 async def ingest_all():
-    """Manually trigger full re-ingestion of all Notes_ docs."""
-    results = await ingest_all_documents()
-    return {"ingested": len(results), "results": results}
+    job_id = secrets.token_hex(8)
+    _jobs[job_id] = {"status": "running", "done": 0, "total": 0, "current": "", "results": [], "error": None}
+    asyncio.create_task(_run_ingest_job(job_id))
+    return {"job_id": job_id}
+
+
+@router.get("/ingest/status/{job_id}", dependencies=[Depends(require_admin)])
+async def ingest_status(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.post("/ingest/doc/{doc_id}", dependencies=[Depends(require_admin)])
 async def ingest_one(doc_id: str):
-    """Re-ingest a single document by Google Doc ID."""
-    result = await ingest_document(doc_id)
-    return result
+    try:
+        result = await ingest_document(doc_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Content editing ──────────────────────────────────────
@@ -176,3 +208,48 @@ async def get_content():
             result[section] = {}
         result[section][field] = val
     return result
+
+
+# ── Course management ─────────────────────────────────────
+
+class CourseCreate(BaseModel):
+    name: str
+    institution: str = "SMU"
+    year: int
+    summary: str = ""
+    topics: List[str] = []
+    google_doc_id: Optional[str] = None
+
+
+@router.post("/courses", dependencies=[Depends(require_admin)])
+async def create_course(req: CourseCreate, db: AsyncSession = Depends(get_db)):
+    course = Course(
+        name=req.name,
+        institution=req.institution,
+        year=req.year,
+        summary=req.summary,
+        topics=req.topics,
+        google_doc_id=req.google_doc_id,
+    )
+    db.add(course)
+    await db.commit()
+    await db.refresh(course)
+    return {
+        "id": str(course.id),
+        "name": course.name,
+        "institution": course.institution,
+        "year": course.year,
+        "summary": course.summary,
+        "topics": course.topics,
+    }
+
+
+@router.delete("/courses/{course_id}", dependencies=[Depends(require_admin)])
+async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Course).where(Course.id == course_id))
+    course = result.scalar_one_or_none()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    await db.delete(course)
+    await db.commit()
+    return {"ok": True}

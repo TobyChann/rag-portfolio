@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 
-interface Stage {
+export interface Stage {
   id: string;
   label: string;
   sublabel: string;
@@ -71,7 +71,10 @@ const BOTTOM_BAR = {
 
 const DOMAIN = ["Finance", "Accounting", "Business Analytics"];
 
-export default function PipelineDiagram() {
+export { STAGES as DEFAULT_STAGES };
+
+export default function PipelineDiagram({ stages: propStages }: { stages?: Stage[] }) {
+  const stages = propStages || STAGES;
   const [active, setActive] = useState<string | null>(null);
   const [animated, setAnimated] = useState(false);
   const [flowPos, setFlowPos] = useState(0);
@@ -99,7 +102,7 @@ export default function PipelineDiagram() {
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  const activeStage = STAGES.find(s => s.id === active);
+  const activeStage = stages.find(s => s.id === active);
 
   return (
     <div
@@ -165,7 +168,7 @@ export default function PipelineDiagram() {
           {/* Pipeline stages */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`,
+            gridTemplateColumns: `repeat(${stages.length}, 1fr)`,
             gap: 6,
             position: "relative",
             marginBottom: 6,
@@ -197,12 +200,12 @@ export default function PipelineDiagram() {
               transition: "left 0.05s linear",
             }} />
 
-            {STAGES.map((stage, i) => {
+            {stages.map((stage, i) => {
               const isActive = active === stage.id;
               return (
                 <div key={stage.id} style={{ position: "relative", zIndex: 2 }}>
                   {/* Arrow connector (not after last) */}
-                  {i < STAGES.length - 1 && (
+                  {i < stages.length - 1 && (
                     <div style={{
                       position: "absolute",
                       right: -10,

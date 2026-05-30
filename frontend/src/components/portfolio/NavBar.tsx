@@ -1,7 +1,9 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import iconImage from '../../app/icon.png';
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -35,7 +37,7 @@ export default function NavBar() {
           fontWeight: 600, fontSize: 14,
           color: "var(--fg)", textDecoration: "none",
         }}>
-          Toby Chan
+          <Image src={iconImage} alt="Icon" style={{ width: 28, height: 28, marginRight: 8 }} />
         </Link>
 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -81,7 +83,7 @@ export default function NavBar() {
           )}
 
           <a
-            href="https://github.com/yourusername"
+            href="https://github.com/TobyChann"
             target="_blank" rel="noopener noreferrer"
             className="btn btn-secondary"
             style={{ fontSize: 12, padding: "5px 12px", marginLeft: 8 }}

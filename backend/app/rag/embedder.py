@@ -1,31 +1,29 @@
+import asyncio
 from sentence_transformers import SentenceTransformer
 from app.rag.chunker import Chunk
+from app.config import get_settings
 
-# Load once at module level — stays in memory
-# all-MiniLM-L6-v2: fast, good quality, 384 dimensions, free
+settings = get_settings()
 _model = None
-
 
 def get_model() -> SentenceTransformer:
     global _model
     if _model is None:
         print("[embedder] Loading sentence-transformers model...")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        
+        _model = SentenceTransformer(
+            "all-MiniLM-L6-v2",
+            token=settings.hf_token
+        )
         print("[embedder] Model loaded")
     return _model
 
+def _encode_texts(texts: list[str]):
+    return get_model().encode(texts, batch_size=32, show_progress_bar=True)
 
 async def embed_chunks(chunks: list[Chunk]) -> list[dict]:
-    """
-    Embed a list of Chunk objects.
-    Returns list of dicts ready for Zilliz upsert.
-    """
-    model = get_model()
     texts = [c.text for c in chunks]
-
-    # Batch embed (much faster than one-by-one)
-    vectors = model.encode(texts, batch_size=32, show_progress_bar=True)
-
+    vectors = await asyncio.to_thread(_encode_texts, texts)
     return [
         {
             "id": f"{chunk.doc_id}_{chunk.chunk_index}",
@@ -39,9 +37,6 @@ async def embed_chunks(chunks: list[Chunk]) -> list[dict]:
         for chunk, vector in zip(chunks, vectors)
     ]
 
-
 async def embed_query(question: str) -> list[float]:
-    """Embed a single query string for retrieval."""
-    model = get_model()
-    vector = model.encode(question)
+    vector = await asyncio.to_thread(get_model().encode, question)
     return vector.tolist()
