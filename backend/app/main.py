@@ -10,9 +10,9 @@ from app.api import query, webhook, admin, health, courses
 settings = get_settings()
 
 ALLOWED_ORIGINS = (
-    ["*"] if settings.environment == "development"
+    ["http://localhost:3000"]
+    if settings.environment == "development"
     else [
-        "http://localhost:3000",
         "https://your-vercel-app.vercel.app",
     ]
 )
@@ -33,7 +33,7 @@ app = FastAPI(title="Portfolio RAG API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=ALLOWED_ORIGINS != ["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
