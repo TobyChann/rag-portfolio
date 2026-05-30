@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 interface Props {
   src: string;
@@ -119,8 +120,8 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
         </div>
       </div>
 
-      {/* Fullscreen overlay */}
-      {zoomed && (
+      {/* Fullscreen overlay — portalled to body to escape any parent transform/stacking context */}
+      {zoomed && createPortal(
         <div
           ref={overlayRef}
           onTouchStart={onTouchStart}
@@ -173,7 +174,8 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
               cursor: scale > 1 ? "grab" : "default",
             }}
           />
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

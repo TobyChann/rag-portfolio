@@ -7,7 +7,7 @@ import Footer from "@/components/portfolio/Footer";
 import Chatbot from "@/components/chat/Chatbot";
 
 export const metadata: Metadata = {
-  title: "Toby Chan — Portfolio",
+  title: "My Portfolio",
   description: "Information Systems and Accountancy student at SMU, analytics engineering focus.",
 };
 

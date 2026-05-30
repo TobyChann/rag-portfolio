@@ -133,10 +133,11 @@ async def debug_health():
     except Exception as e:
         results["redis"] = f"FAIL: {e}"
 
-    # Zilliz
+    # Zilliz — run synchronous gRPC init in a thread to avoid blocking the event loop
     try:
+        import asyncio
         from app.rag.retriever import get_client
-        get_client()
+        await asyncio.get_event_loop().run_in_executor(None, get_client)
         results["zilliz"] = "ok"
     except Exception as e:
         results["zilliz"] = f"FAIL: {e}"

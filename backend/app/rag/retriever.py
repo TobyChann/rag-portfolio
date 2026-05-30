@@ -1,4 +1,4 @@
-from pymilvus import MilvusClient
+from pymilvus import MilvusClient, DataType
 from app.config import get_settings
 
 settings = get_settings()
@@ -15,37 +15,26 @@ def get_client() -> MilvusClient:
             uri=settings.zilliz_uri,
             token=settings.zilliz_token,
         )
-        _ensure_collection()
+        _ensure_collection(_client)
     return _client
 
 
-def _ensure_collection():
+def _ensure_collection(client: MilvusClient):
     """Create collection if it doesn't exist."""
-    client = MilvusClient(
-        uri=settings.zilliz_uri,
-        token=settings.zilliz_token,
-    )
     if not client.has_collection(settings.zilliz_collection):
+        schema = client.create_schema(auto_id=False)
+        schema.add_field(field_name="id",          datatype=DataType.VARCHAR,      is_primary=True, max_length=200)
+        schema.add_field(field_name="vector",       datatype=DataType.FLOAT_VECTOR, dim=VECTOR_DIM)
+        schema.add_field(field_name="text",         datatype=DataType.VARCHAR,      max_length=4000)
+        schema.add_field(field_name="doc_id",       datatype=DataType.VARCHAR,      max_length=200)
+        schema.add_field(field_name="doc_title",    datatype=DataType.VARCHAR,      max_length=500)
+        schema.add_field(field_name="heading",      datatype=DataType.VARCHAR,      max_length=500)
+        schema.add_field(field_name="chunk_index",  datatype=DataType.INT64)
         client.create_collection(
             collection_name=settings.zilliz_collection,
             dimension=VECTOR_DIM,
             metric_type="COSINE",
-            # Extra fields stored alongside vectors
-            schema=client.create_schema(auto_id=False).add_field(
-                field_name="id", datatype="VarChar", is_primary=True, max_length=200
-            ).add_field(
-                field_name="vector", datatype="FloatVector", dim=VECTOR_DIM
-            ).add_field(
-                field_name="text", datatype="VarChar", max_length=4000
-            ).add_field(
-                field_name="doc_id", datatype="VarChar", max_length=200
-            ).add_field(
-                field_name="doc_title", datatype="VarChar", max_length=500
-            ).add_field(
-                field_name="heading", datatype="VarChar", max_length=500
-            ).add_field(
-                field_name="chunk_index", datatype="Int64"
-            )
+            schema=schema,
         )
         print(f"[retriever] Created collection: {settings.zilliz_collection}")
 

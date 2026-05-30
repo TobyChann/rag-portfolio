@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     langsmith_tracing: str = "false"
     langsmith_project: str = "portfolio-rag"
 
+    # Admin
+    admin_password_hash: str = ""
+
     # App
     environment: str = "development"
     rate_limit_per_hour: int = 20
