@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
-from app.db.models import Visitor, Query, Document, Course
+from app.db.models import Visitor, Query, Document, Course, HomeContent, PipelineConfig
 import uuid
 
 
@@ -81,6 +81,60 @@ async def upsert_document(db: AsyncSession, google_doc_id: str,
         db.add(doc)
     await db.flush()
     return doc
+
+
+# --- HomeContent ---
+
+async def get_home_content(db: AsyncSession) -> dict:
+    """Return all home content as nested dict {section: {field: value}}."""
+    result = await db.execute(select(HomeContent))
+    rows = result.scalars().all()
+    content = {}
+    for row in rows:
+        if row.section not in content:
+            content[row.section] = {}
+        content[row.section][row.field] = row.value
+    return content
+
+
+async def set_home_content(db: AsyncSession, section: str, field: str, value: str):
+    """Upsert a single home content field."""
+    result = await db.execute(
+        select(HomeContent).where(
+            HomeContent.section == section,
+            HomeContent.field == field,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        row.value = value
+    else:
+        row = HomeContent(section=section, field=field, value=value)
+        db.add(row)
+    await db.flush()
+    return row
+
+
+# --- PipelineConfig ---
+
+async def get_pipeline_config(db: AsyncSession) -> list:
+    result = await db.execute(select(PipelineConfig))
+    return result.scalars().all()
+
+
+async def upsert_pipeline_bar(db: AsyncSession, bar_id: str, label: str, items: list):
+    result = await db.execute(
+        select(PipelineConfig).where(PipelineConfig.bar_id == bar_id)
+    )
+    bar = result.scalar_one_or_none()
+    if bar:
+        bar.label = label
+        bar.items = items
+    else:
+        bar = PipelineConfig(bar_id=bar_id, label=label, items=items)
+        db.add(bar)
+    await db.flush()
+    return bar
 
 
 # --- Admin stats ---

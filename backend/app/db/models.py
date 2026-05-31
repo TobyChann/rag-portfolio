@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, ARRAY, JSON
+from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, ARRAY, JSON, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -29,7 +29,7 @@ class Visitor(Base):
     industry = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)
-    referrer = Column(String, nullable=True)          # ?ref=linkedin etc
+    referrer = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -37,13 +37,13 @@ class Query(Base):
     __tablename__ = "queries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(String, index=True)           # FK to visitors.session_id
+    session_id = Column(String, index=True)
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
-    chunks_used = Column(JSON, nullable=True)          # [{doc, page, score}]
+    chunks_used = Column(JSON, nullable=True)
     response_ms = Column(Integer, nullable=True)
-    feedback = Column(Integer, default=0)             # 1, 0, -1
-    cache_hit = Column(String, nullable=True)         # "redis" | "zilliz" | null
+    feedback = Column(Integer, default=0)
+    cache_hit = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -53,7 +53,7 @@ class Document(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     google_doc_id = Column(String, unique=True, index=True)
     title = Column(String, nullable=False)
-    topic = Column(String, nullable=True)             # e.g. "Databases"
+    topic = Column(String, nullable=True)
     chunk_count = Column(Integer, default=0)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -68,5 +68,31 @@ class Course(Base):
     year = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
     topics = Column(ARRAY(String), default=[])
-    google_doc_id = Column(String, nullable=True)     # link to source doc
+    google_doc_id = Column(String, nullable=True)        # legacy single link
+    linked_doc_ids = Column(ARRAY(String), default=[])   # multiple linked documents
+    is_currently_learning = Column(Boolean, default=False)
+    is_self_explored = Column(Boolean, default=False)    # outside formal curriculum
+    notes = Column(Text, nullable=True)                  # visible note/tag for employer
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class HomeContent(Base):
+    """Persistent key-value store for editable home page content (replaces Redis)."""
+    __tablename__ = "home_content"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    section = Column(String, nullable=False, index=True)   # e.g. "intro", "education"
+    field = Column(String, nullable=False, index=True)     # e.g. "name", "bio"
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PipelineConfig(Base):
+    """Persistent config for the pipeline diagram bars (project mgmt, db layer, infra)."""
+    __tablename__ = "pipeline_config"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bar_id = Column(String, nullable=False, unique=True)  # "top_bar" | "db_layer" | "bottom_bar"
+    label = Column(String, nullable=False)
+    items = Column(ARRAY(String), default=[])
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

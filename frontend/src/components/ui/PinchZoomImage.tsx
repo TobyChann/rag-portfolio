@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 
 interface Props {
@@ -9,16 +9,57 @@ interface Props {
 }
 
 export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
-  const [zoomed, setZoomed]   = useState(false);
-  const [scale, setScale]     = useState(1);
-  const [offset, setOffset]   = useState({ x: 0, y: 0 });
+  const [zoomed, setZoomed] = useState(false);
+  const [scale, setScale]   = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
 
-  const overlayRef  = useRef<HTMLDivElement>(null);
-  const lastDist    = useRef<number | null>(null);
-  const lastPos     = useRef<{ x: number; y: number } | null>(null);
-  const isDragging  = useRef(false);
+  const overlayRef   = useRef<HTMLDivElement>(null);
+  const scaleRef     = useRef(1);
+  const offsetRef    = useRef({ x: 0, y: 0 });
 
-  // Attach wheel listener as non-passive so preventDefault works
+  // Keep refs in sync so mouse handlers always see latest values
+  useEffect(() => { scaleRef.current = scale; }, [scale]);
+  useEffect(() => { offsetRef.current = offset; }, [offset]);
+
+  // ── Mouse drag ──────────────────────────────────────────
+  const dragStart  = useRef<{ x: number; y: number } | null>(null);
+  const offsetAtDragStart = useRef({ x: 0, y: 0 });
+
+  function onMouseDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    offsetAtDragStart.current = { ...offsetRef.current };
+  }
+
+  useEffect(() => {
+    if (!zoomed) return;
+
+    function onMouseMove(e: MouseEvent) {
+      if (!dragStart.current) return;
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      const next = {
+        x: offsetAtDragStart.current.x + dx,
+        y: offsetAtDragStart.current.y + dy,
+      };
+      offsetRef.current = next;
+      setOffset(next);
+    }
+
+    function onMouseUp() {
+      dragStart.current = null;
+    }
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [zoomed]);
+
+  // ── Wheel zoom ──────────────────────────────────────────
   useEffect(() => {
     if (!zoomed) return;
     const el = overlayRef.current;
@@ -27,14 +68,16 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      setScale(s => Math.min(Math.max(s * factor, 1), 6));
+      const next = Math.min(Math.max(scaleRef.current * factor, 1), 6);
+      scaleRef.current = next;
+      setScale(next);
     };
 
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
   }, [zoomed]);
 
-  // Close on Escape
+  // ── Escape ──────────────────────────────────────────────
   useEffect(() => {
     if (!zoomed) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") closeZoom(); };
@@ -42,14 +85,20 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
     return () => window.removeEventListener("keydown", handler);
   }, [zoomed]);
 
+  // ── Touch pinch + drag ──────────────────────────────────
+  const lastDist   = useRef<number | null>(null);
+  const lastTouch  = useRef<{ x: number; y: number } | null>(null);
+  const isTouchDragging = useRef(false);
+
   function onTouchStart(e: React.TouchEvent) {
     if (e.touches.length === 2) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       lastDist.current = Math.sqrt(dx * dx + dy * dy);
+      isTouchDragging.current = false;
     } else {
-      lastPos.current  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      isDragging.current = true;
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      isTouchDragging.current = true;
     }
   }
 
@@ -59,30 +108,35 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
       const dx   = e.touches[0].clientX - e.touches[1].clientX;
       const dy   = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      setScale(s => Math.min(Math.max(s * (dist / lastDist.current!), 1), 6));
+      const next = Math.min(Math.max(scaleRef.current * (dist / lastDist.current), 1), 6);
+      scaleRef.current = next;
+      setScale(next);
       lastDist.current = dist;
-    } else if (e.touches.length === 1 && lastPos.current && isDragging.current) {
-      const dx = e.touches[0].clientX - lastPos.current.x;
-      const dy = e.touches[0].clientY - lastPos.current.y;
-      setOffset(o => ({ x: o.x + dx, y: o.y + dy }));
-      lastPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 1 && lastTouch.current && isTouchDragging.current) {
+      const dx = e.touches[0].clientX - lastTouch.current.x;
+      const dy = e.touches[0].clientY - lastTouch.current.y;
+      const next = { x: offsetRef.current.x + dx, y: offsetRef.current.y + dy };
+      offsetRef.current = next;
+      setOffset(next);
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   }
 
   function onTouchEnd() {
-    lastDist.current   = null;
-    isDragging.current = false;
+    lastDist.current = null;
+    isTouchDragging.current = false;
   }
 
   function closeZoom() {
     setZoomed(false);
     setScale(1);
     setOffset({ x: 0, y: 0 });
+    scaleRef.current = 1;
+    offsetRef.current = { x: 0, y: 0 };
   }
 
   return (
     <>
-      {/* Thumbnail */}
       <div
         onClick={() => setZoomed(true)}
         style={{
@@ -120,10 +174,10 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
         </div>
       </div>
 
-      {/* Fullscreen overlay — portalled to body to escape any parent transform/stacking context */}
       {zoomed && createPortal(
         <div
           ref={overlayRef}
+          onMouseDown={onMouseDown}
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
@@ -132,11 +186,13 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
             background: "rgba(0,0,0,0.92)",
             display: "flex", alignItems: "center", justifyContent: "center",
             zIndex: 100, overflow: "hidden", touchAction: "none",
+            cursor: dragStart.current ? "grabbing" : scale > 1 ? "grab" : "default",
+            userSelect: "none",
           }}
         >
-          {/* Close */}
           <button
             onClick={closeZoom}
+            onMouseDown={e => e.stopPropagation()}
             style={{
               position: "absolute", top: 16, right: 16, zIndex: 101,
               width: 36, height: 36, borderRadius: "50%",
@@ -149,14 +205,13 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
             ×
           </button>
 
-          {/* Scale indicator */}
           <p style={{
             position: "absolute", bottom: 16, left: "50%",
             transform: "translateX(-50%)",
             color: "rgba(255,255,255,.4)", fontSize: 11,
             pointerEvents: "none", whiteSpace: "nowrap",
           }}>
-            Pinch or scroll to zoom · drag to pan · {Math.round(scale * 100)}%
+            Scroll to zoom · drag to pan · {Math.round(scale * 100)}%
           </p>
 
           <img
@@ -166,11 +221,11 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
             style={{
               maxWidth: "92vw", maxHeight: "88vh",
               objectFit: "contain",
-              transform: `scale(${scale}) translate(${offset.x / scale}px, ${offset.y / scale}px)`,
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
               transformOrigin: "center center",
-              transition: "transform 0.04s linear",
+              transition: dragStart.current ? "none" : "transform 0.05s linear",
               userSelect: "none",
-              cursor: scale > 1 ? "grab" : "default",
+              pointerEvents: "none",
             }}
           />
         </div>,

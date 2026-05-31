@@ -2,8 +2,6 @@ import os
 import asyncio
 import hashlib
 import secrets
-import json
-from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -11,19 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
-from app.db.crud import get_stats
+from app.db.crud import get_stats, get_home_content, set_home_content, get_pipeline_config, upsert_pipeline_bar
 from app.db.models import Course
 from app.cache.redis_client import get_redis
 from app.sync.ingestion import ingest_document, list_documents
 from app.config import get_settings
 
-_jobs: dict = {}  # in-process job tracker
+_jobs: dict = {}
 
 router = APIRouter()
 settings = get_settings()
 
-ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
-SESSION_TTL = 60 * 60 * 24 * 30  # 30 days — survives docker restarts
+SESSION_TTL = 60 * 60 * 24 * 30
 ADMIN_COOKIE = "admin_session"
 
 
@@ -90,18 +87,12 @@ async def me(token: str = Depends(require_admin)):
 
 
 @router.post("/change-password")
-async def change_password(
-    req: ChangePasswordRequest,
-    token: str = Depends(require_admin),
-):
+async def change_password(req: ChangePasswordRequest, token: str = Depends(require_admin)):
     expected = os.getenv("ADMIN_PASSWORD_HASH", "")
     if _hash_password(req.current_password) != expected:
         raise HTTPException(status_code=401, detail="Current password incorrect")
-
-    # Print new hash — admin copies this into .env and restarts
     new_hash = _hash_password(req.new_password)
     print(f"[admin] New password hash: {new_hash}")
-    print(f"[admin] Set ADMIN_PASSWORD_HASH={new_hash} in your .env and restart")
     return {
         "message": "Copy this hash into ADMIN_PASSWORD_HASH in your .env and restart the backend",
         "new_hash": new_hash,
@@ -175,7 +166,7 @@ async def ingest_one(doc_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Content editing ──────────────────────────────────────
+# ── Home content (persisted to Supabase) ─────────────────
 
 class ContentPatch(BaseModel):
     section: str
@@ -184,33 +175,56 @@ class ContentPatch(BaseModel):
 
 
 @router.patch("/content", dependencies=[Depends(require_admin)])
-async def patch_content(req: ContentPatch):
-    """
-    Save inline edits from the home page edit mode.
-    Stores in Redis for now — replace with Supabase for persistence across restarts.
-    """
-    r = await get_redis()
-    key = f"content:{req.section}:{req.field}"
-    await r.set(key, req.value)
+async def patch_content(req: ContentPatch, db: AsyncSession = Depends(get_db)):
+    """Save inline edits — persisted to Supabase."""
+    await set_home_content(db, req.section, req.field, req.value)
     return {"ok": True}
 
 
 @router.get("/content")
-async def get_content():
-    """Return all saved content overrides."""
-    r = await get_redis()
-    keys = await r.keys("content:*")
-    result = {}
-    for key in keys:
-        _, section, field = key.split(":", 2)
-        val = await r.get(key)
-        if section not in result:
-            result[section] = {}
-        result[section][field] = val
-    return result
+async def get_content(db: AsyncSession = Depends(get_db)):
+    """Return all saved content overrides from Supabase."""
+    return await get_home_content(db)
+
+
+# ── Pipeline config ──────────────────────────────────────
+
+class PipelineBarUpdate(BaseModel):
+    bar_id: str   # "top_bar" | "db_layer" | "bottom_bar"
+    label: str
+    items: List[str]
+
+
+@router.get("/pipeline-config")
+async def get_pipeline_config_endpoint(db: AsyncSession = Depends(get_db)):
+    """Return saved pipeline bar configs."""
+    bars = await get_pipeline_config(db)
+    return {b.bar_id: {"label": b.label, "items": b.items} for b in bars}
+
+
+@router.patch("/pipeline-config", dependencies=[Depends(require_admin)])
+async def update_pipeline_config(req: PipelineBarUpdate, db: AsyncSession = Depends(get_db)):
+    """Upsert a pipeline bar config."""
+    await upsert_pipeline_bar(db, req.bar_id, req.label, req.items)
+    return {"ok": True}
 
 
 # ── Course management ─────────────────────────────────────
+
+def _serialize_course(c: Course) -> dict:
+    return {
+        "id": str(c.id),
+        "name": c.name,
+        "institution": c.institution or "SMU",
+        "year": c.year or 0,
+        "summary": c.summary or "",
+        "topics": c.topics or [],
+        "linked_doc_ids": c.linked_doc_ids or [],
+        "is_currently_learning": c.is_currently_learning or False,
+        "is_self_explored": c.is_self_explored or False,
+        "notes": c.notes or "",
+    }
+
 
 class CourseCreate(BaseModel):
     name: str
@@ -218,7 +232,23 @@ class CourseCreate(BaseModel):
     year: int
     summary: str = ""
     topics: List[str] = []
+    linked_doc_ids: List[str] = []
+    is_currently_learning: bool = False
+    is_self_explored: bool = False
+    notes: str = ""
     google_doc_id: Optional[str] = None
+
+
+class CourseUpdate(BaseModel):
+    name: Optional[str] = None
+    institution: Optional[str] = None
+    year: Optional[int] = None
+    summary: Optional[str] = None
+    topics: Optional[List[str]] = None
+    linked_doc_ids: Optional[List[str]] = None
+    is_currently_learning: Optional[bool] = None
+    is_self_explored: Optional[bool] = None
+    notes: Optional[str] = None
 
 
 @router.post("/courses", dependencies=[Depends(require_admin)])
@@ -229,19 +259,38 @@ async def create_course(req: CourseCreate, db: AsyncSession = Depends(get_db)):
         year=req.year,
         summary=req.summary,
         topics=req.topics,
+        linked_doc_ids=req.linked_doc_ids,
+        is_currently_learning=req.is_currently_learning,
+        is_self_explored=req.is_self_explored,
+        notes=req.notes,
         google_doc_id=req.google_doc_id,
     )
     db.add(course)
     await db.commit()
     await db.refresh(course)
-    return {
-        "id": str(course.id),
-        "name": course.name,
-        "institution": course.institution,
-        "year": course.year,
-        "summary": course.summary,
-        "topics": course.topics,
-    }
+    return _serialize_course(course)
+
+
+@router.patch("/courses/{course_id}", dependencies=[Depends(require_admin)])
+async def update_course(course_id: str, req: CourseUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Course).where(Course.id == course_id))
+    course = result.scalar_one_or_none()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    if req.name is not None:          course.name = req.name
+    if req.institution is not None:   course.institution = req.institution
+    if req.year is not None:          course.year = req.year
+    if req.summary is not None:       course.summary = req.summary
+    if req.topics is not None:        course.topics = req.topics
+    if req.linked_doc_ids is not None: course.linked_doc_ids = req.linked_doc_ids
+    if req.is_currently_learning is not None: course.is_currently_learning = req.is_currently_learning
+    if req.is_self_explored is not None:      course.is_self_explored = req.is_self_explored
+    if req.notes is not None:         course.notes = req.notes
+
+    await db.commit()
+    await db.refresh(course)
+    return _serialize_course(course)
 
 
 @router.delete("/courses/{course_id}", dependencies=[Depends(require_admin)])
