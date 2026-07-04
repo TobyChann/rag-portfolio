@@ -5,11 +5,13 @@ services:
       - "8000:8000"
     env_file:
       - ./backend/.env
-    volumes:
-      - ./backend:/app
     depends_on:
       - redis
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    deploy:
+      resources:
+        limits:
+          memory: 6G
 
   frontend:
     build: ./frontend
@@ -29,4 +31,3 @@ services:
     ports:
       - "6379:6379"
     command: redis-server --maxmemory 50mb --maxmemory-policy allkeys-lru
-

@@ -1,3 +1,4 @@
+# backend/app/rag/pipeline.py
 import time
 from openai import AsyncOpenAI
 from app.rag.embedder import embed_query

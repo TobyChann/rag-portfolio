@@ -1,3 +1,4 @@
+# backend/app/sync/google_client.py
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.config import get_settings

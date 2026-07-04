@@ -1,12 +1,16 @@
+# backend/app/rag/retriever.py
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pymilvus import MilvusClient, DataType
 from app.config import get_settings
 
 settings = get_settings()
 _client = None
 
-VECTOR_DIM = 384    # all-MiniLM-L6-v2 output dimension
-TOP_K = 5           # chunks to retrieve per query
+_zilliz_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="zilliz")
+
+VECTOR_DIM = 384
+TOP_K = 5
 
 
 def get_client() -> MilvusClient:
@@ -20,70 +24,87 @@ def get_client() -> MilvusClient:
     return _client
 
 
-def _ensure_index(client: MilvusClient):
-    """Create vector index if missing (handles collections created before the index fix)."""
-    try:
-        existing = client.list_indexes(settings.zilliz_collection)
-        has_vector_idx = any(
-            (idx.get("field_name") or idx.get("fieldName", "")) == "vector"
-            for idx in existing
-        )
-        if not has_vector_idx:
-            index_params = client.prepare_index_params()
-            index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
-            client.create_index(collection_name=settings.zilliz_collection, index_params=index_params)
-            client.load_collection(settings.zilliz_collection)
-            print(f"[retriever] Created missing index on existing collection")
-    except Exception as e:
-        print(f"[retriever] Warning: could not verify/create index: {e}")
-
-
 def _ensure_collection(client: MilvusClient):
-    """Create collection + index if needed; ensure index on existing collections."""
+    index_params = client.prepare_index_params()
+    index_params.add_index(
+        field_name="vector",
+        index_type="AUTOINDEX",
+        metric_type="COSINE"
+    )
+
     if not client.has_collection(settings.zilliz_collection):
         schema = client.create_schema(auto_id=False)
         schema.add_field(field_name="id",          datatype=DataType.VARCHAR,      is_primary=True, max_length=200)
-        schema.add_field(field_name="vector",       datatype=DataType.FLOAT_VECTOR, dim=VECTOR_DIM)
-        schema.add_field(field_name="text",         datatype=DataType.VARCHAR,      max_length=4000)
-        schema.add_field(field_name="doc_id",       datatype=DataType.VARCHAR,      max_length=200)
-        schema.add_field(field_name="doc_title",    datatype=DataType.VARCHAR,      max_length=500)
-        schema.add_field(field_name="heading",      datatype=DataType.VARCHAR,      max_length=500)
-        schema.add_field(field_name="chunk_index",  datatype=DataType.INT64)
+        schema.add_field(field_name="vector",      datatype=DataType.FLOAT_VECTOR, dim=VECTOR_DIM)
+        schema.add_field(field_name="text",        datatype=DataType.VARCHAR,      max_length=4000)
+        schema.add_field(field_name="doc_id",      datatype=DataType.VARCHAR,      max_length=200)
+        schema.add_field(field_name="doc_title",   datatype=DataType.VARCHAR,      max_length=500)
+        schema.add_field(field_name="heading",     datatype=DataType.VARCHAR,      max_length=500)
+        schema.add_field(field_name="chunk_index", datatype=DataType.INT64)
+
         client.create_collection(
             collection_name=settings.zilliz_collection,
-            dimension=VECTOR_DIM,
-            metric_type="COSINE",
             schema=schema,
+            index_params=index_params
         )
-        index_params = client.prepare_index_params()
-        index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
-        client.create_index(collection_name=settings.zilliz_collection, index_params=index_params)
-        client.load_collection(settings.zilliz_collection)
         print(f"[retriever] Created collection + index: {settings.zilliz_collection}")
     else:
-        _ensure_index(client)
+        # list_indexes returns a list of strings (field names) in some pymilvus versions,
+        # and a list of dicts in others. Handle both.
+        try:
+            existing = client.list_indexes(settings.zilliz_collection)
+            # Normalise: could be ["vector"] or [{"field_name": "vector", ...}]
+            indexed_fields = set()
+            for item in existing:
+                if isinstance(item, str):
+                    indexed_fields.add(item)
+                elif isinstance(item, dict):
+                    indexed_fields.add(item.get("field_name") or item.get("fieldName", ""))
+
+            if "vector" not in indexed_fields:
+                print("[retriever] Vector index missing — creating it now")
+                client.create_index(
+                    collection_name=settings.zilliz_collection,
+                    index_params=index_params
+                )
+        except Exception as e:
+            print(f"[retriever] Warning: could not check index: {e}")
+
+        client.load_collection(settings.zilliz_collection)
+        print(f"[retriever] Collection loaded: {settings.zilliz_collection}")
 
 
 async def upsert_chunks(embedded_chunks: list[dict]):
     client = get_client()
-    await asyncio.to_thread(client.upsert, collection_name=settings.zilliz_collection, data=embedded_chunks)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        _zilliz_executor,
+        lambda: client.upsert(collection_name=settings.zilliz_collection, data=embedded_chunks)
+    )
     print(f"[retriever] Upserted {len(embedded_chunks)} chunks")
 
 
 async def delete_chunks_for_doc(doc_id: str):
     client = get_client()
-    await asyncio.to_thread(client.delete, collection_name=settings.zilliz_collection, filter=f'doc_id == "{doc_id}"')
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        _zilliz_executor,
+        lambda: client.delete(collection_name=settings.zilliz_collection, filter=f'doc_id == "{doc_id}"')
+    )
     print(f"[retriever] Deleted old chunks for doc: {doc_id}")
 
 
 async def retrieve(query_vector: list[float], top_k: int = TOP_K) -> list[dict]:
     client = get_client()
-    results = await asyncio.to_thread(
-        client.search,
-        collection_name=settings.zilliz_collection,
-        data=[query_vector],
-        limit=top_k,
-        output_fields=["text", "doc_id", "doc_title", "heading", "chunk_index"],
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        _zilliz_executor,
+        lambda: client.search(
+            collection_name=settings.zilliz_collection,
+            data=[query_vector],
+            limit=top_k,
+            output_fields=["text", "doc_id", "doc_title", "heading", "chunk_index"],
+        )
     )
     return [
         {
