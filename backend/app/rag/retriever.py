@@ -49,11 +49,9 @@ def _ensure_collection(client: MilvusClient):
         )
         print(f"[retriever] Created collection + index: {settings.zilliz_collection}")
     else:
-        # list_indexes returns a list of strings (field names) in some pymilvus versions,
-        # and a list of dicts in others. Handle both.
         try:
             existing = client.list_indexes(settings.zilliz_collection)
-            # Normalise: could be ["vector"] or [{"field_name": "vector", ...}]
+            # list_indexes returns list of index names (strings) in newer pymilvus
             indexed_fields = set()
             for item in existing:
                 if isinstance(item, str):
@@ -68,7 +66,7 @@ def _ensure_collection(client: MilvusClient):
                     index_params=index_params
                 )
         except Exception as e:
-            print(f"[retriever] Warning: could not check index: {e}")
+            print(f"[retriever] Warning: could not verify/create index: {e}")
 
         client.load_collection(settings.zilliz_collection)
         print(f"[retriever] Collection loaded: {settings.zilliz_collection}")
