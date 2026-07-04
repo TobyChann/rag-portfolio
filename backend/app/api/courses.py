@@ -11,8 +11,10 @@ from app.config import get_settings
 
 router = APIRouter()
 settings = get_settings()
-_openai = AsyncOpenAI(api_key=settings.openai_api_key)
-
+_gemini = AsyncOpenAI(
+    api_key=settings.gemini_api_key,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+)
 
 def _serialize_course(c: Course) -> dict:
     return {
@@ -57,7 +59,7 @@ class GenerateDescriptionRequest(BaseModel):
 
 @router.post("/courses/generate-description")
 async def generate_description(req: GenerateDescriptionRequest):
-    """Use GPT-4o-mini to generate a recommended course description."""
+    """Use gemini-2.0-flash to generate a recommended course description."""
     context_parts = [
         f"Course: {req.course_name}",
         f"Institution: {req.institution}",
@@ -66,8 +68,8 @@ async def generate_description(req: GenerateDescriptionRequest):
     ]
     context = "\n".join(p for p in context_parts if p)
 
-    response = await _openai.chat.completions.create(
-        model="gpt-4o-mini",
+    response = await _gemini.chat.completions.create(
+        model="gemini-2.0-flash",
         messages=[
             {
                 "role": "system",

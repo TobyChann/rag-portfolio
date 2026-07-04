@@ -144,6 +144,6 @@ async def debug_health():
 
     # OpenAI key present
     import os
-    results["openai_key"] = "set" if os.getenv("OPENAI_API_KEY") else "MISSING"
+    results["gemini_key"] = "set" if os.getenv("GEMINI_API_KEY") else "MISSING"
 
     return results

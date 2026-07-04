@@ -4,8 +4,11 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # OpenAI
-    openai_api_key: str
+    # OpenAI (kept for any legacy references)
+    openai_api_key: str = ""
+
+    # Gemini (primary LLM)
+    gemini_api_key: str = ""
 
     # Zilliz
     zilliz_uri: str

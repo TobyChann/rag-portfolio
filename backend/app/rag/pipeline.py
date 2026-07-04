@@ -26,7 +26,7 @@ async def run_rag_query(question: str) -> dict:
     1. Check Redis cache (exact match)
     2. Embed question
     3. Retrieve relevant chunks from Zilliz
-    4. Generate answer with GPT-4o-mini
+    4. Generate answer with gemini-2.0-flash
     5. Cache result
     Returns {answer, chunks, response_ms, cache_hit}
     """
@@ -64,7 +64,7 @@ async def run_rag_query(question: str) -> dict:
 
     # 5. Call GPT-4o-mini
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gemini-2.0-flash",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
