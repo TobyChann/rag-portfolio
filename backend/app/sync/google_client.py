@@ -1,6 +1,8 @@
 # backend/app/sync/google_client.py
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+import io
 from app.config import get_settings
 
 settings = get_settings()
@@ -10,7 +12,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents.readonly",
 ]
 
-# Only ingest files whose name starts with this prefix
 NOTES_PREFIX = "Notes_"
 
 
@@ -59,11 +60,21 @@ def _recursive_list(service, folder_id: str) -> list[dict]:
 
 
 def export_doc_as_pdf(doc_id: str) -> bytes:
+    """
+    Export a Google Doc as PDF bytes using chunked streaming download.
+    Bypasses the ~10MB export size limit that affects files().export().
+    """
     service = get_drive_service()
-    return service.files().export(
+    request = service.files().export_media(
         fileId=doc_id,
         mimeType="application/pdf",
-    ).execute()
+    )
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request, chunksize=10 * 1024 * 1024)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return buffer.getvalue()
 
 
 def get_doc_metadata(doc_id: str) -> dict:

@@ -14,14 +14,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
-_pipeline_options = PdfPipelineOptions()
-_pipeline_options.do_ocr = True
-_pipeline_options.do_table_structure = True
+# OCR-enabled converter — for docs with image-embedded text
+_pipeline_options_ocr = PdfPipelineOptions()
+_pipeline_options_ocr.do_ocr = True
+_pipeline_options_ocr.do_table_structure = True
 
-converter = DocumentConverter(
-    format_options={
-        "pdf": PdfFormatOption(pipeline_options=_pipeline_options)
-    }
+# Lean converter — for plain text docs, saves ~1.5GB of RapidOCR model loading
+_pipeline_options_no_ocr = PdfPipelineOptions()
+_pipeline_options_no_ocr.do_ocr = False
+_pipeline_options_no_ocr.do_table_structure = True
+
+converter_ocr = DocumentConverter(
+    format_options={"pdf": PdfFormatOption(pipeline_options=_pipeline_options_ocr)}
+)
+converter_no_ocr = DocumentConverter(
+    format_options={"pdf": PdfFormatOption(pipeline_options=_pipeline_options_no_ocr)}
 )
 
 # Dedicated executors — Docling and embedder on separate threads so they
@@ -30,14 +37,14 @@ _docling_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="doclin
 _embed_executor   = ThreadPoolExecutor(max_workers=1, thread_name_prefix="embedder")
 
 
-async def ingest_document(google_doc_id: str, title: str = None) -> dict:
+async def ingest_document(google_doc_id: str, title: str = None, use_ocr: bool = False) -> dict:
     start = time.time()
 
     if not title:
         meta = await asyncio.to_thread(get_doc_metadata, google_doc_id)
         title = meta["name"]
 
-    print(f"[ingest] Starting: {title} ({google_doc_id})")
+    print(f"[ingest] Starting: {title} ({google_doc_id}) | OCR={'on' if use_ocr else 'off'}")
 
     pdf_bytes = await asyncio.to_thread(export_doc_as_pdf, google_doc_id)
 
@@ -47,6 +54,7 @@ async def ingest_document(google_doc_id: str, title: str = None) -> dict:
 
     try:
         loop = asyncio.get_event_loop()
+        converter = converter_ocr if use_ocr else converter_no_ocr
 
         # Docling parse — CPU-bound, dedicated executor
         result = await loop.run_in_executor(
