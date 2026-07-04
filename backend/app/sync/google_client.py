@@ -1,8 +1,6 @@
 # backend/app/sync/google_client.py
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-import io
 from app.config import get_settings
 
 settings = get_settings()
@@ -12,6 +10,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents.readonly",
 ]
 
+# Only ingest files whose name starts with this prefix
 NOTES_PREFIX = "Notes_"
 
 
@@ -59,22 +58,18 @@ def _recursive_list(service, folder_id: str) -> list[dict]:
     return docs
 
 
-def export_doc_as_pdf(doc_id: str) -> bytes:
+def export_doc_as_text(doc_id: str) -> str:
     """
-    Export a Google Doc as PDF bytes using chunked streaming download.
-    Bypasses the ~10MB export size limit that affects files().export().
+    Export a Google Doc as plain text using Google's native export.
+    Flattens all tabs into one text blob. Google has already OCR'd any
+    images at document-creation time. Instant, ~zero memory, no OCR needed.
     """
     service = get_drive_service()
-    request = service.files().export_media(
+    response = service.files().export(
         fileId=doc_id,
-        mimeType="application/pdf",
-    )
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request, chunksize=10 * 1024 * 1024)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    return buffer.getvalue()
+        mimeType="text/plain",
+    ).execute()
+    return response.decode("utf-8")
 
 
 def get_doc_metadata(doc_id: str) -> dict:

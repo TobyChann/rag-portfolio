@@ -125,16 +125,14 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
 
 
 # ── Ingestion controls ────────────────────────────────
-class IngestOneRequest(BaseModel):
-    use_ocr: bool = False
 
-async def _run_ingest_job(job_id: str, use_ocr: bool = False):
+async def _run_ingest_job(job_id: str):
     try:
         docs = await list_documents()
         _jobs[job_id]["total"] = len(docs)
         for doc in docs:
             _jobs[job_id]["current"] = doc["name"]
-            result = await ingest_document(doc["id"], doc["name"], use_ocr=use_ocr)
+            result = await ingest_document(doc["id"], doc["name"])
             _jobs[job_id]["done"] += 1
             _jobs[job_id]["results"].append({"title": result["title"], "chunks": result["chunk_count"], "ms": result["elapsed_ms"]})
         _jobs[job_id]["status"] = "done"
@@ -144,10 +142,10 @@ async def _run_ingest_job(job_id: str, use_ocr: bool = False):
 
 
 @router.post("/ingest/all", dependencies=[Depends(require_admin)])
-async def ingest_all(req: IngestOneRequest = IngestOneRequest()):
+async def ingest_all():
     job_id = secrets.token_hex(8)
     _jobs[job_id] = {"status": "running", "done": 0, "total": 0, "current": "", "results": [], "error": None}
-    asyncio.create_task(_run_ingest_job(job_id, use_ocr=req.use_ocr))
+    asyncio.create_task(_run_ingest_job(job_id))
     return {"job_id": job_id}
 
 
@@ -160,9 +158,9 @@ async def ingest_status(job_id: str):
 
 
 @router.post("/ingest/doc/{doc_id}", dependencies=[Depends(require_admin)])
-async def ingest_one(doc_id: str, req: IngestOneRequest = IngestOneRequest()):
+async def ingest_one(doc_id: str):
     try:
-        result = await ingest_document(doc_id, use_ocr=req.use_ocr)
+        result = await ingest_document(doc_id)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
