@@ -7,7 +7,10 @@ from app.cache.query_cache import get_cached_answer, set_cached_answer
 from app.config import get_settings
 
 settings = get_settings()
-client = AsyncOpenAI(api_key=settings.openai_api_key)
+client = AsyncOpenAI(
+    api_key=settings.gemini_api_key,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+)
 
 SYSTEM_PROMPT = """You are a helpful assistant representing a job candidate's portfolio.
 Answer questions about their skills, coursework, and experience using only the provided context.
