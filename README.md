@@ -1,6 +1,6 @@
 # Portfolio RAG Chatbot
 
-RAG-powered portfolio site. Employers can ask questions about skills and coursework via an embedded chatbot backed by Google Docs, Zilliz, and GPT-4o-mini.
+RAG-powered portfolio site. Employers can ask questions about skills and coursework via an embedded chatbot backed by Google Docs, Zilliz, and gemini-2.5-flash.
 
 ## Stack
 Backend: FastAPI · Zilliz Cloud · Redis · Supabase · Docling · LangChain

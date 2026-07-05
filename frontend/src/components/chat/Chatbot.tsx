@@ -140,7 +140,7 @@ export default function Chatbot() {
                     <div style={S.header}>
                         <div>
                             <p style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Ask about my profile</p>
-                            <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>RAG-powered · GPT-4o-mini</p>
+                            <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>RAG-powered · gemini-2.5-flash</p>
                         </div>
                         <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: "var(--fg-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 2px" }}>×</button>
                     </div>

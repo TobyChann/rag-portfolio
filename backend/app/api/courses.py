@@ -59,7 +59,7 @@ class GenerateDescriptionRequest(BaseModel):
 
 @router.post("/courses/generate-description")
 async def generate_description(req: GenerateDescriptionRequest):
-    """Use gemini-2.5-flash-lite to generate a recommended course description."""
+    """Use gemini-2.5-flash to generate a recommended course description."""
     context_parts = [
         f"Course: {req.course_name}",
         f"Institution: {req.institution}",
@@ -69,7 +69,7 @@ async def generate_description(req: GenerateDescriptionRequest):
     context = "\n".join(p for p in context_parts if p)
 
     response = await _gemini.chat.completions.create(
-        model="gemini-2.5-flash-lite",
+        model="gemini-2.5-flash",
         messages=[
             {
                 "role": "system",

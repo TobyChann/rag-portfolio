@@ -43,7 +43,7 @@ const RAG_STEPS = [
   { num:"01", title:"Rate limiting and session", body:"Incoming queries hit /query which immediately checks Redis for an active IP rate-limit counter (max 20 per hour, TTL-based) and a valid session token set during onboarding. Rejected requests never reach the LLM.", tags:["Redis Cloud","FastAPI dependency"] },
   { num:"02", title:"Cache check", body:"The question is SHA-256 hashed and checked against a Redis key-value store of previous Q&A pairs. A cache hit returns the answer instantly with zero LLM cost.", tags:["Redis","SHA-256 hash"] },
   { num:"03", title:"Semantic vector search", body:"The query is embedded with the same all-MiniLM-L6-v2 model used during ingestion (critical for metric consistency), then fired as an ANN search against Zilliz using cosine similarity. Top K=5 chunks are returned.", tags:["Zilliz ANN","Cosine similarity","K=5"] },
-  { num:"04", title:"Context synthesis", body:"The five chunk texts are injected into an engineered system prompt alongside the original question and sent to GPT-4o-mini. Temperature is set to 0.2 for factual answers. Max output is 500 tokens.", tags:["GPT-4o-mini","LangChain","temp=0.2"] },
+  { num:"04", title:"Context synthesis", body:"The five chunk texts are injected into an engineered system prompt alongside the original question and sent to gemini-2.5-flash. Temperature is set to 0.2 for factual answers. Max output is 500 tokens.", tags:["gemini-2.5-flash","LangChain","temp=0.2"] },
   { num:"05", title:"Observability", body:"Every step including retrieved chunk contents, embedding latency, LLM token counts, and end-to-end response time is pushed to LangSmith for prompt performance tracing and regression detection.", tags:["LangSmith","LangChain tracing"] },
 ];
 
@@ -61,7 +61,7 @@ const STACK = [
   { name:"Next.js",            role:"Frontend framework",    reason:"File-based routing, SSR, zero-config Vercel deploys",                               tag:"frontend" },
   { name:"Zilliz Cloud",       role:"Vector database",       reason:"Managed Milvus, stores and searches 384-dim embeddings at scale",                   tag:"ai" },
   { name:"all-MiniLM-L6-v2",  role:"Embedding model",       reason:"Free local HuggingFace model, zero API cost, strong semantic understanding",          tag:"ai" },
-  { name:"GPT-4o-mini",        role:"LLM",                   reason:"Cost-efficient OpenAI model sufficient for RAG answer generation",                  tag:"ai" },
+  { name:"gemini-2.5-flash",        role:"LLM",                   reason:"Cost-efficient OpenAI model sufficient for RAG answer generation",                  tag:"ai" },
   { name:"LangChain",          role:"RAG orchestration",     reason:"Standard library for chaining retrieval and generation pipelines",                  tag:"ai" },
   { name:"LangSmith",          role:"LLM observability",     reason:"Traces every RAG call including latency, retrieved chunks, and token usage",        tag:"observability" },
   { name:"Docling",            role:"Document parsing",      reason:"IBM PDF parser handling mixed text and image documents natively",                   tag:"ai" },
@@ -158,7 +158,7 @@ export default function StackPage() {
         }}>
           {[
             ["Embedding model","all-MiniLM-L6-v2 · 384-dim"],
-            ["LLM","GPT-4o-mini"],
+            ["LLM","gemini-2.5-flash"],
             ["Vector DB","Zilliz Cloud (Milvus)"],
             ["Backend","FastAPI · Railway"],
             ["Frontend","Next.js · Vercel"],
