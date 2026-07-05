@@ -7,11 +7,11 @@ services:
       - ./backend/.env
     depends_on:
       - redis
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     deploy:
       resources:
         limits:
-          memory: 16G
+          memory: 12G
         reservations:
           memory: 4G
 
