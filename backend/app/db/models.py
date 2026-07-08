@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, ARRAY, JSON, Boolean
+from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, ARRAY, JSON, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -55,6 +55,10 @@ class Document(Base):
     title = Column(String, nullable=False)
     topic = Column(String, nullable=True)
     chunk_count = Column(Integer, default=0)
+    skills = Column(ARRAY(String), default=[])
+    summary = Column(Text, nullable=True)
+    tag_status = Column(String, default="pending")
+    needs_review = Column(Boolean, default=False)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -96,3 +100,45 @@ class PipelineConfig(Base):
     label = Column(String, nullable=False)
     items = Column(ARRAY(String), default=[])
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class ProfileNote(Base):
+    """Living background: education, goal, preferences. One row per fact."""
+    __tablename__ = "profile_notes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category = Column(String, default="misc")   # education | background | goal | preference | misc
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Skill(Base):
+    """Curated inventory = source of truth for the public dashboard."""
+    __tablename__ = "skills"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)       # case-insensitive unique via functional index (migration)
+    category = Column(String, nullable=True)    # maps to diagram bars; null = off-diagram
+    achieved = Column(Boolean, default=True)    # 1/0; derived-from-notes = you have it
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Chat(Base):
+    """Owner planning threads — NOT the visitor Query log."""
+    __tablename__ = "chats"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String, nullable=True)       # auto from first message, editable
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chat_id = Column(UUID(as_uuid=True), ForeignKey("chats.id", ondelete="CASCADE"), index=True)
+    role = Column(String, nullable=False)       # user | assistant
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

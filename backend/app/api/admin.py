@@ -6,13 +6,12 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
+from sqlalchemy import select, func 
 from app.db.database import get_db
 from app.db.crud import get_stats, get_home_content, set_home_content, get_pipeline_config, upsert_pipeline_bar
-from app.db.models import Course
+from app.db.models import Course, Skill, ProfileNote
 from app.cache.redis_client import get_redis
-from app.sync.ingestion import ingest_document, list_documents
+from app.sync.ingestion import ingest_document, list_documents, list_all_files
 from app.config import get_settings
 
 _jobs: dict = {}
