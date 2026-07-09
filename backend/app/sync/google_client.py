@@ -32,18 +32,22 @@ def get_docs_service():
 # ── Listing ──────────────────────────────────────────────
 
 def _list_all_files(service, folder_id: str) -> list[dict]:
-    """Recursively return every non-folder file: {id, name, mimeType, modifiedTime}."""
-    files = []
-    results = service.files().list(
-        q=f"'{folder_id}' in parents and trashed=false",
-        fields="files(id, name, mimeType, modifiedTime)",
-    ).execute()
-    for item in results.get("files", []):
-        if item["mimeType"] == "application/vnd.google-apps.folder":
-            files.extend(_list_all_files(service, item["id"]))
-        else:
-            files.append(item)
-    return files
+    files, page_token = [], None
+    while True:
+        results = service.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            fields="nextPageToken, files(id, name, mimeType, modifiedTime)",
+            pageSize=1000,
+            pageToken=page_token,
+        ).execute()
+        for item in results.get("files", []):
+            if item["mimeType"] == "application/vnd.google-apps.folder":
+                files.extend(_list_all_files(service, item["id"]))
+            else:
+                files.append(item)
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            return files
 
 
 def list_docs_in_folder(folder_id: str) -> list[dict]:
@@ -86,9 +90,3 @@ def doc_has_images(doc_id: str) -> bool:
 def get_doc_metadata(doc_id: str) -> dict:
     service = get_drive_service()
     return service.files().get(fileId=doc_id, fields="id, name, modifiedTime").execute()
-
-
-def setup_drive_watch(doc_id: str, webhook_url: str, channel_id: str) -> dict:
-    service = get_drive_service()
-    body = {"id": channel_id, "type": "web_hook", "address": webhook_url}
-    return service.files().watch(fileId=doc_id, body=body).execute()

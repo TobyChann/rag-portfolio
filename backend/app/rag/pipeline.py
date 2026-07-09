@@ -12,11 +12,15 @@ client = AsyncOpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
+RAG_MODEL = "gemini-2.5-flash"
+
 SYSTEM_PROMPT = """You are a helpful assistant representing a job candidate's portfolio.
 Answer questions about their skills, coursework, and experience using only the provided context.
 Be concise, professional, and specific. If the context doesn't contain relevant information,
 say so honestly rather than making things up.
 Always refer to the candidate in third person (e.g. "They studied...", "Their experience includes...").
+Write in plain prose. Do not use markdown formatting (no **, *, #, or bullet symbols) —
+the chat window renders plain text only. If listing things, list them naturally in a sentence.
 """
 
 
@@ -26,7 +30,7 @@ async def run_rag_query(question: str) -> dict:
     1. Check Redis cache (exact match)
     2. Embed question
     3. Retrieve relevant chunks from Zilliz
-    4. Generate answer with gemini-2.5-flash
+    4. Generate answer (thinking disabled — factual extraction, not reasoning)
     5. Cache result
     Returns {answer, chunks, response_ms, cache_hit}
     """
@@ -62,15 +66,18 @@ async def run_rag_query(question: str) -> dict:
         for c in chunks
     )
 
-    # 5. Call GPT-4o-mini
+    # 5. Generate the answer.
+    # reasoning_effort="none" is critical on Gemini 2.5: thinking tokens count
+    # against max_tokens and were truncating visitor answers mid-sentence.
     response = await client.chat.completions.create(
-        model="gemini-2.5-flash",
+        model=RAG_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
         ],
-        max_tokens=500,
+        max_tokens=1024,
         temperature=0.2,  # Low temp = more factual, less creative
+        reasoning_effort="none",
     )
 
     answer = response.choices[0].message.content

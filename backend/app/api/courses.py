@@ -1,3 +1,4 @@
+# backend/app/api/courses.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -6,7 +7,7 @@ from typing import List, Optional
 from openai import AsyncOpenAI
 
 from app.db.database import get_db
-from app.db.models import Course, Document
+from app.db.models import Course, Document, Skill
 from app.config import get_settings
 
 router = APIRouter()
@@ -41,13 +42,38 @@ async def get_courses(db: AsyncSession = Depends(get_db)):
 
 @router.get("/courses/documents")
 async def get_documents_for_linking(db: AsyncSession = Depends(get_db)):
-    """Return all ingested documents for the course linking dropdown."""
+    """Ingested documents for course linking + module display (now carries
+    the LLM-generated summary/skills so linked notes can be shown richly)."""
     result = await db.execute(select(Document).order_by(Document.title))
     docs = result.scalars().all()
     return [
-        {"id": str(d.id), "google_doc_id": d.google_doc_id, "title": d.title, "topic": d.topic or ""}
+        {
+            "id": str(d.id),
+            "google_doc_id": d.google_doc_id,
+            "title": d.title,
+            "topic": d.topic or "",
+            "summary": d.summary or "",
+            "skills": d.skills or [],
+            "tag_status": d.tag_status or "pending",
+        }
         for d in docs
     ]
+
+
+@router.get("/skills")
+async def get_public_skills(db: AsyncSession = Depends(get_db)):
+    """PUBLIC. Source of truth for the home page skills diagram (Phase 3).
+    Only achieved AND categorised skills appear — uncategorised inventory
+    stays private, which is the curation gate. Returns {category: [names]}."""
+    result = await db.execute(
+        select(Skill)
+        .where(Skill.achieved == True, Skill.category.isnot(None))  # noqa: E712
+        .order_by(Skill.sort_order, Skill.name)
+    )
+    grouped: dict[str, list[str]] = {}
+    for s in result.scalars().all():
+        grouped.setdefault(s.category, []).append(s.name)
+    return grouped
 
 
 class GenerateDescriptionRequest(BaseModel):
@@ -84,5 +110,6 @@ async def generate_description(req: GenerateDescriptionRequest):
         ],
         max_tokens=150,
         temperature=0.7,
+        reasoning_effort="none",
     )
     return {"description": response.choices[0].message.content.strip()}

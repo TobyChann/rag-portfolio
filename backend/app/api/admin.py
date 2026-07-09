@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func 
 from app.db.database import get_db
 from app.db.crud import get_stats, get_home_content, set_home_content, get_pipeline_config, upsert_pipeline_bar
-from app.db.models import Course, Skill, ProfileNote
+from app.db.models import Course, Skill, ProfileNote, Document
 from app.cache.redis_client import get_redis
-from app.sync.ingestion import ingest_document, list_documents, list_all_files
+from app.sync.ingestion import ingest_document, list_documents, list_all_files, resolve_doc_text, generate_doc_tags, add_skills_to_inventory
 from app.config import get_settings
 
 _jobs: dict = {}
@@ -164,6 +164,12 @@ async def ingest_one(doc_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/sync", dependencies=[Depends(require_admin)])
+async def sync_changed():
+    """Delta sync: only new or modified Notes_ docs are (re-)ingested."""
+    from app.sync.ingestion import sync_changed_documents
+    return await sync_changed_documents()
+
 
 # ── Home content (persisted to Supabase) ─────────────────
 
@@ -301,3 +307,77 @@ async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
     await db.delete(course)
     await db.commit()
     return {"ok": True}
+
+#  ── Document tags / review queue ─────────────────────────
+ 
+def _serialize_doc(d: Document) -> dict:
+    return {
+        "id": str(d.id),
+        "google_doc_id": d.google_doc_id,
+        "title": d.title,
+        "chunk_count": d.chunk_count or 0,
+        "summary": d.summary or "",
+        "skills": d.skills or [],
+        "tag_status": d.tag_status or "pending",
+        "needs_review": bool(d.needs_review),
+        "last_synced_at": d.last_synced_at.isoformat() if d.last_synced_at else None,
+    }
+ 
+ 
+class DocTagsUpdate(BaseModel):
+    summary: str
+    skills: List[str]
+    add_to_inventory: bool = True   # push (new) skills into the Skill table, uncategorised
+ 
+ 
+@router.get("/documents", dependencies=[Depends(require_admin)])
+async def list_admin_documents(db: AsyncSession = Depends(get_db)):
+    """All ingested docs with tag state. needs_review first, then pending."""
+    result = await db.execute(
+        select(Document).order_by(
+            Document.needs_review.desc(),
+            Document.tag_status,          # 'approved' < 'pending' alphabetically — fine either way
+            Document.title,
+        )
+    )
+    return [_serialize_doc(d) for d in result.scalars().all()]
+ 
+ 
+@router.post("/documents/{google_doc_id}/generate-tags", dependencies=[Depends(require_admin)])
+async def generate_tags_for_doc(google_doc_id: str, db: AsyncSession = Depends(get_db)):
+    """Generate SUGGESTED summary + skills for one doc. Returns suggestions only —
+    nothing is saved until you edit/confirm via PATCH (modify-before-insert)."""
+    result = await db.execute(select(Document).where(Document.google_doc_id == google_doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        text = await resolve_doc_text(google_doc_id, doc.title)
+        tags = await generate_doc_tags(text, doc.title)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Tag generation failed: {e}")
+    return {"summary": tags["summary"], "skills": tags["skills"]}
+ 
+ 
+@router.patch("/documents/{google_doc_id}/tags", dependencies=[Depends(require_admin)])
+async def save_doc_tags(google_doc_id: str, req: DocTagsUpdate, db: AsyncSession = Depends(get_db)):
+    """Save the (possibly edited) tags, approve, clear needs_review, and
+    optionally upsert the skills into the inventory (they land uncategorised —
+    drag them onto the board to publish)."""
+    result = await db.execute(select(Document).where(Document.google_doc_id == google_doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+ 
+    doc.summary = req.summary.strip()
+    doc.skills = [s.strip() for s in req.skills if s.strip()]
+    doc.tag_status = "approved"
+    doc.needs_review = False
+ 
+    created = 0
+    if req.add_to_inventory:
+        created = await add_skills_to_inventory(db, doc.skills)
+ 
+    await db.commit()
+    await db.refresh(doc)
+    return {"doc": _serialize_doc(doc), "skills_added_to_inventory": created}
