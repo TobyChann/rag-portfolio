@@ -1,6 +1,11 @@
+// frontend/src/app/admin/page.tsx
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import DrivePicker from "@/components/admin/DrivePicker";
+import SkillsBoard from "@/components/admin/SkillsBoard";
+import ProfileEditor from "@/components/admin/ProfileEditor";
+import DocReview from "@/components/admin/DocReview";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 

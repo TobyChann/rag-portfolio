@@ -2,8 +2,8 @@
 import re
 from dataclasses import dataclass
 
-CHUNK_SIZE = 800        # target tokens per chunk (rough char estimate: * 4)
-CHUNK_OVERLAP = 150     # overlap between chunks to preserve context
+CHUNK_SIZE = 256
+CHUNK_OVERLAP = 50
 
 
 @dataclass
