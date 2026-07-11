@@ -8,7 +8,6 @@ into every request — NOT from an ever-growing transcript. The transcript
 Threads are independent: chat B does not see chat A's transcript.
 """
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel

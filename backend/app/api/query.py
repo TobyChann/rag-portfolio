@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.pipeline import run_rag_query

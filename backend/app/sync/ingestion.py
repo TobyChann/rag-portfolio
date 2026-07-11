@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 from openai import AsyncOpenAI
@@ -39,7 +40,10 @@ _llm = AsyncOpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-TAG_MODEL = "gemini-2.5-flash"
+# Flash-Lite for tagging: ~15 RPM / ~1,000 RPD vs Flash's ~10 / 250, and
+# tagging is formulaic extraction — Lite is plenty. Keeps bulk ingestion
+# inside the free tier.
+TAG_MODEL = "gemini-2.5-flash-lite"
 
 _PARSE_PROMPT = (
     "Convert this document to clean Markdown. Transcribe ALL text faithfully, "
@@ -61,6 +65,25 @@ _TAG_SYSTEM = (
 )
 
 
+# ── Rate-limit resilience ────────────────────────────────
+
+async def _with_backoff(fn, *args, attempts: int = 4, base: int = 10, **kwargs):
+    """Retry rate-limited LLM calls with exponential backoff (10s, 20s, 40s, 80s).
+    Non-rate-limit errors raise immediately."""
+    for i in range(attempts):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate" in msg.lower():
+                wait = base * (2 ** i)
+                print(f"[llm] rate limited, retrying in {wait}s ({i + 1}/{attempts})")
+                await asyncio.sleep(wait)
+                continue
+            raise
+    raise RuntimeError("Rate limit: retries exhausted")
+
+
 # ── Text resolution (parse step) ─────────────────────────
 
 def _parse_pdf_to_markdown(pdf_bytes: bytes, title: str) -> str:
@@ -80,25 +103,35 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes, title: str) -> str:
 
 async def resolve_doc_text(google_doc_id: str, title: str) -> str:
     """Text-only docs → instant export. Image-bearing docs → PDF → Gemini markdown
-    (captures image-text + infers headings). For always-parse, drop the has_images guard.
+    (captures image-text + infers headings). If the multimodal parse is rate-limited
+    past all retries (or fails for any reason), fall back to plain-text export so
+    the doc still ingests — image-text is just skipped until a later re-ingest.
     Public: also used by the admin generate-tags endpoint."""
     has_images = await asyncio.to_thread(doc_has_images, google_doc_id)
     if not has_images:
         text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
         print(f"[ingest] {title}: text export ({len(text)} chars)")
         return text
+
     pdf = await asyncio.to_thread(export_doc_as_pdf, google_doc_id)
-    md = await asyncio.to_thread(_parse_pdf_to_markdown, pdf, title)
-    print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")
-    return md
+    try:
+        md = await _with_backoff(asyncio.to_thread, _parse_pdf_to_markdown, pdf, title)
+        print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")
+        return md
+    except Exception as e:
+        print(f"[ingest] {title}: multimodal parse failed ({e}) — falling back to "
+              f"text export; image-text skipped this run, re-ingest later to capture it")
+        return await asyncio.to_thread(export_doc_as_text, google_doc_id)
 
 
 # ── Tag / summary generation ─────────────────────────────
 
 async def generate_doc_tags(text: str, title: str) -> dict:
-    """One LLM call → {"summary": str, "skills": [str]}. Raises on failure;
-    callers decide whether that's fatal (admin button) or soft (auto-ingest)."""
-    resp = await _llm.chat.completions.create(
+    """One LLM call → {"summary": str, "skills": [str]}. Rate limits are retried
+    with backoff; other failures raise, and callers decide whether that's fatal
+    (admin button) or soft (auto-ingest)."""
+    resp = await _with_backoff(
+        _llm.chat.completions.create,
         model=TAG_MODEL,
         messages=[
             {"role": "system", "content": _TAG_SYSTEM},
@@ -133,7 +166,7 @@ async def add_skills_to_inventory(db, names: list[str]) -> int:
 async def _persist_document(google_doc_id: str, title: str, chunk_count: int, text: str):
     """Upsert the Document row. INSERT path: auto-generate tags + push skills into
     the inventory (agreed rule: auto on insert). UPDATE path: metadata only —
-    the webhook owns needs_review, and tags are regenerated via the admin queue."""
+    the sync flow owns needs_review, and tags are regenerated via the admin queue."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document).where(Document.google_doc_id == google_doc_id))
         doc = result.scalar_one_or_none()
@@ -213,11 +246,12 @@ async def ingest_document(google_doc_id: str, title: str = None) -> dict:
     print(f"[ingest] Done: {title} — {len(chunks)} chunks in {elapsed}ms")
     return {"doc_id": google_doc_id, "title": title, "chunk_count": len(chunks), "elapsed_ms": elapsed}
 
+
+# ── Delta sync (replaces the webhook/watch design) ───────
+
 async def sync_changed_documents() -> dict:
     """Delta sync: ingest new docs, re-ingest changed ones (modifiedTime vs
     last_synced_at), skip the rest. Changed existing docs get needs_review=True."""
-    from datetime import datetime
-
     drive_docs = await list_documents()
 
     async with AsyncSessionLocal() as db:
@@ -245,6 +279,9 @@ async def sync_changed_documents() -> dict:
 
     print(f"[sync] {len(ingested)} ingested, {skipped} unchanged")
     return {"ingested": ingested, "skipped": skipped}
+
+
+# ── Drive listings ───────────────────────────────────────
 
 async def list_documents() -> list[dict]:
     return await asyncio.to_thread(list_docs_in_folder, settings.google_drive_folder_id)

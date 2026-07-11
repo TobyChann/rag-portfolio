@@ -1,6 +1,6 @@
 // frontend/src/app/admin/page.tsx
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import DrivePicker from "@/components/admin/DrivePicker";
 import SkillsBoard from "@/components/admin/SkillsBoard";
@@ -24,19 +24,22 @@ interface Stats {
   }[];
 }
 
+const TABS = ["dashboard", "ingest", "skills", "profile", "review", "settings"] as const;
+type Tab = typeof TABS[number];
+
 export default function AdminPage() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
   const [ingestLog, setIngestLog] = useState("");
-  const [jobId, setJobId] = useState<string | null>(null);
   const [jobProgress, setJobProgress] = useState<{ done: number; total: number; current: string } | null>(null);
-  const [tab, setTab] = useState<"dashboard" | "ingest" | "settings">("dashboard");
+  const [syncing, setSyncing] = useState(false);
+  const [tab, setTab] = useState<Tab>("dashboard");
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
-  const [docId, setDocId] = useState("");
+  const jobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -77,8 +80,7 @@ export default function AdminPage() {
       const res = await fetch(`${API}/admin/ingest/all`, { method: "POST", credentials: "include" });
       if (!res.ok) throw new Error(await res.text());
       const { job_id } = await res.json();
-      setJobId(job_id);
-      localStorage.setItem("ingest_job_id", job_id);
+      jobIdRef.current = job_id;
       // Poll for progress
       const poll = setInterval(async () => {
         try {
@@ -90,12 +92,21 @@ export default function AdminPage() {
             setIngesting(false);
             setIngestLog(`Done. ${status.done} documents ingested.\n\n${status.results.map((r: any) => `${r.title}: ${r.chunks} chunks (${r.ms}ms)`).join("\n")}`);
             setJobProgress(null);
+            jobIdRef.current = null;
+            loadStats();
+          } else if (status.status === "cancelled") {
+            clearInterval(poll);
+            setIngesting(false);
+            setIngestLog(`Cancelled after ${status.done} document(s).\n\n${status.results.map((r: any) => `${r.title}: ${r.chunks} chunks (${r.ms}ms)`).join("\n")}`);
+            setJobProgress(null);
+            jobIdRef.current = null;
             loadStats();
           } else if (status.status === "error") {
             clearInterval(poll);
             setIngesting(false);
             setIngestLog(`Error: ${status.error}`);
             setJobProgress(null);
+            jobIdRef.current = null;
           }
         } catch { clearInterval(poll); setIngesting(false); }
       }, 2000);
@@ -105,18 +116,33 @@ export default function AdminPage() {
     }
   }
 
-  async function handleIngestOne() {
-    if (!docId.trim()) return;
-    setIngesting(true);
-    setIngestLog(`Ingesting ${docId}...`);
+  async function cancelIngest() {
+    if (!jobIdRef.current) return;
     try {
-      const res = await fetch(`${API}/admin/ingest/doc/${docId}`, { method: "POST", credentials: "include" });
+      await fetch(`${API}/admin/ingest/cancel/${jobIdRef.current}`, {
+        method: "POST", credentials: "include",
+      });
+      // Poll loop picks up the "cancelled" status on its next tick
+    } catch { /* cancel is best-effort */ }
+  }
+
+  async function handleSyncChanged() {
+    setSyncing(true);
+    setIngestLog("");
+    try {
+      const res = await fetch(`${API}/admin/sync`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setIngestLog(`Done. ${data.title}: ${data.chunk_count} chunks in ${data.elapsed_ms}ms`);
-    } catch {
-      setIngestLog("Error. Check backend logs.");
+      setIngestLog(
+        data.ingested.length === 0
+          ? `Everything up to date. ${data.skipped} docs unchanged.`
+          : `Synced ${data.ingested.length} changed/new doc(s):\n${data.ingested.join("\n")}\n\n${data.skipped} unchanged (skipped).`
+      );
+      loadStats();
+    } catch (e: any) {
+      setIngestLog(`Sync error: ${e.message}`);
     } finally {
-      setIngesting(false);
+      setSyncing(false);
     }
   }
 
@@ -154,14 +180,19 @@ export default function AdminPage() {
             Welcome back, Toby
           </p>
         </div>
-        <button onClick={handleLogout} className="btn btn-secondary" style={{ fontSize: 12 }}>
-          Sign out
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => router.push("/planning")} className="btn btn-secondary" style={{ fontSize: 12 }}>
+            Planning chat →
+          </button>
+          <button onClick={handleLogout} className="btn btn-secondary" style={{ fontSize: 12 }}>
+            Sign out
+          </button>
+        </div>
       </div>
 
       {/* Tab strip */}
       <div className="tab-strip">
-        {(["dashboard", "ingest", "settings"] as const).map(t => (
+        {TABS.map(t => (
           <button key={t} className={`tab-item${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
@@ -246,19 +277,35 @@ export default function AdminPage() {
             borderRadius: "var(--radius-md)",
             background: "var(--bg-secondary)",
           }}>
-            <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Ingest all documents</p>
+            <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Sync & ingest</p>
             <p style={{ fontSize: 13, color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.7 }}>
-              Re-ingests all files in your Google Drive folder that match the <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>Notes_</code> prefix.
-              Only changed chunks are replaced in Zilliz.
+              <strong>Sync changed</strong> compares Drive's <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>modifiedTime</code> against
+              the last sync and only re-ingests new or edited <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>Notes_</code> docs — run this after a study session.
+              <strong> Ingest all</strong> force-rebuilds everything (use after changing chunking settings); it's paced to stay inside the Gemini rate limit, so expect ~8s per doc.
             </p>
-            <button
-              onClick={handleIngestAll}
-              disabled={ingesting}
-              className="btn btn-primary"
-              style={{ opacity: ingesting ? 0.6 : 1 }}
-            >
-              {ingesting ? "Running in background…" : "Ingest all Notes_ documents"}
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={handleSyncChanged}
+                disabled={syncing || ingesting}
+                className="btn btn-primary"
+                style={{ opacity: syncing || ingesting ? 0.6 : 1 }}
+              >
+                {syncing ? "Syncing…" : "Sync changed docs"}
+              </button>
+              <button
+                onClick={handleIngestAll}
+                disabled={ingesting || syncing}
+                className="btn btn-secondary"
+                style={{ opacity: ingesting || syncing ? 0.6 : 1 }}
+              >
+                {ingesting ? "Running in background…" : "Ingest all (full rebuild)"}
+              </button>
+              {ingesting && jobProgress && (
+                <button onClick={cancelIngest} className="btn btn-ghost" style={{ fontSize: 12 }}>
+                  Cancel after current doc
+                </button>
+              )}
+            </div>
 
             {jobProgress && (
               <div style={{ marginTop: 16 }}>
@@ -283,38 +330,6 @@ export default function AdminPage() {
             )}
           </div>
 
-          <div style={{
-            padding: "16px 20px",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            background: "var(--bg-secondary)",
-          }}>
-            <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Ingest single document</p>
-            <p style={{ fontSize: 13, color: "var(--fg-muted)", marginBottom: 12 }}>
-              Paste the Google Doc ID from the URL: drive.google.com/d/<strong>THIS_PART</strong>/edit
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={docId}
-                onChange={e => setDocId(e.target.value)}
-                placeholder="Google Doc ID"
-                style={{
-                  flex: 1, fontSize: 13, padding: "8px 12px",
-                  border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                  background: "var(--bg)", color: "var(--fg)",
-                }}
-              />
-              <button
-                onClick={handleIngestOne}
-                disabled={ingesting || !docId.trim()}
-                className="btn btn-primary"
-                style={{ opacity: (ingesting || !docId.trim()) ? 0.5 : 1 }}
-              >
-                Ingest
-              </button>
-            </div>
-          </div>
-
           {ingestLog && (
             <pre style={{
               fontSize: 12, color: "var(--fg-muted)",
@@ -325,6 +340,30 @@ export default function AdminPage() {
               whiteSpace: "pre-wrap", wordBreak: "break-word",
             }}>{ingestLog}</pre>
           )}
+
+          {/* Drive picker replaces the old paste-a-doc-ID input */}
+          <DrivePicker />
+        </div>
+      )}
+
+      {/* Skills tab */}
+      {tab === "skills" && (
+        <div className="fade-in">
+          <SkillsBoard />
+        </div>
+      )}
+
+      {/* Profile tab */}
+      {tab === "profile" && (
+        <div className="fade-in">
+          <ProfileEditor />
+        </div>
+      )}
+
+      {/* Review tab */}
+      {tab === "review" && (
+        <div className="fade-in">
+          <DocReview />
         </div>
       )}
 

@@ -1,9 +1,9 @@
 # backend/app/api/courses.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from openai import AsyncOpenAI
 
 from app.db.database import get_db

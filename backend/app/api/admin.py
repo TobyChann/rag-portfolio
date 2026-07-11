@@ -6,12 +6,12 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func 
+from sqlalchemy import select 
 from app.db.database import get_db
 from app.db.crud import get_stats, get_home_content, set_home_content, get_pipeline_config, upsert_pipeline_bar
-from app.db.models import Course, Skill, ProfileNote, Document
+from app.db.models import Course, Document
 from app.cache.redis_client import get_redis
-from app.sync.ingestion import ingest_document, list_documents, list_all_files, resolve_doc_text, generate_doc_tags, add_skills_to_inventory
+from app.sync.ingestion import ingest_document, list_documents, resolve_doc_text, generate_doc_tags, add_skills_to_inventory, list_all_files
 from app.config import get_settings
 
 _jobs: dict = {}
@@ -124,38 +124,62 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
 
 
 # ── Ingestion controls ────────────────────────────────
-
+ 
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+ 
+# 8s between docs keeps parse+tag traffic under both Gemini models' RPM caps
+# during bulk runs. Single-doc ingests and small delta syncs are unaffected.
+INGEST_PACING_SECONDS = 8
+ 
+ 
 async def _run_ingest_job(job_id: str):
     try:
         docs = await list_documents()
         _jobs[job_id]["total"] = len(docs)
         for doc in docs:
+            if _jobs[job_id].get("cancel"):
+                _jobs[job_id]["status"] = "cancelled"
+                return
             _jobs[job_id]["current"] = doc["name"]
             result = await ingest_document(doc["id"], doc["name"])
             _jobs[job_id]["done"] += 1
-            _jobs[job_id]["results"].append({"title": result["title"], "chunks": result["chunk_count"], "ms": result["elapsed_ms"]})
+            _jobs[job_id]["results"].append(
+                {"title": result["title"], "chunks": result["chunk_count"], "ms": result["elapsed_ms"]}
+            )
+            await asyncio.sleep(INGEST_PACING_SECONDS)
         _jobs[job_id]["status"] = "done"
     except Exception as e:
         _jobs[job_id]["status"] = "error"
         _jobs[job_id]["error"] = str(e)
-
-
+ 
+ 
 @router.post("/ingest/all", dependencies=[Depends(require_admin)])
 async def ingest_all():
     job_id = secrets.token_hex(8)
-    _jobs[job_id] = {"status": "running", "done": 0, "total": 0, "current": "", "results": [], "error": None}
+    _jobs[job_id] = {"status": "running", "done": 0, "total": 0, "current": "",
+                     "results": [], "error": None, "cancel": False}
     asyncio.create_task(_run_ingest_job(job_id))
     return {"job_id": job_id}
-
-
+ 
+ 
 @router.get("/ingest/status/{job_id}", dependencies=[Depends(require_admin)])
 async def ingest_status(job_id: str):
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
-
-
+ 
+ 
+@router.post("/ingest/cancel/{job_id}", dependencies=[Depends(require_admin)])
+async def ingest_cancel(job_id: str):
+    """Stop a running ingest-all job after the current document finishes."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job["cancel"] = True
+    return {"ok": True}
+ 
+ 
 @router.post("/ingest/doc/{doc_id}", dependencies=[Depends(require_admin)])
 async def ingest_one(doc_id: str):
     try:
@@ -163,14 +187,29 @@ async def ingest_one(doc_id: str):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+ 
+ 
 @router.post("/sync", dependencies=[Depends(require_admin)])
 async def sync_changed():
     """Delta sync: only new or modified Notes_ docs are (re-)ingested."""
-    from app.sync.ingestion import sync_changed_documents
     return await sync_changed_documents()
-
-
+ 
+ 
+@router.get("/drive-files", dependencies=[Depends(require_admin)])
+async def drive_files():
+    """All files in the Drive folder for the ingestion picker.
+    Only Google Docs are ingestable; others are listed but disabled."""
+    files = await list_all_files()
+    return [
+        {
+            "id": f["id"],
+            "name": f["name"],
+            "mimeType": f["mimeType"],
+            "modifiedTime": f.get("modifiedTime"),
+            "ingestable": f["mimeType"] == GOOGLE_DOC_MIME,
+        }
+        for f in sorted(files, key=lambda x: x["name"].lower())
+    ]
 # ── Home content (persisted to Supabase) ─────────────────
 
 class ContentPatch(BaseModel):

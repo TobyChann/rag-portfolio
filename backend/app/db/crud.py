@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
-from app.db.models import Visitor, Query, Document, Course, HomeContent, PipelineConfig
+from app.db.models import Visitor, Query, Document, HomeContent, PipelineConfig
 import uuid
 
 

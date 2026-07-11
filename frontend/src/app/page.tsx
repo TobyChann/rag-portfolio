@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import PipelineDiagram, { DEFAULT_STAGES, type Stage } from "@/components/portfolio/PipelineDiagram";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -135,63 +135,6 @@ function Section({ id, editMode, children }: { id: string; editMode: boolean; ch
   );
 }
 
-// ─── Pipeline bar editor ──────────────────────────────────────────────
-
-function PipelineBarEditor({
-  barId, bar, onSave,
-}: {
-  barId: string;
-  bar: PipelineBar;
-  onSave: (updated: PipelineBar) => void;
-}) {
-  const [draft, setDraft] = useState<PipelineBar>({ ...bar, items: [...bar.items] });
-  const [newItem, setNewItem] = useState("");
-
-  useEffect(() => { setDraft({ ...bar, items: [...bar.items] }); }, [bar]);
-
-  function addItem() {
-    const v = newItem.trim();
-    if (!v) return;
-    const updated = { ...draft, items: [...draft.items, v] };
-    setDraft(updated);
-    setNewItem("");
-    onSave(updated);
-  }
-
-  function removeItem(item: string) {
-    const updated = { ...draft, items: draft.items.filter(i => i !== item) };
-    setDraft(updated);
-    onSave(updated);
-  }
-
-  return (
-    <div style={{ marginTop: 8, padding: "10px 12px", border: "1px dashed var(--accent)", borderRadius: "var(--radius-md)", background: "var(--bg-secondary)" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-        {draft.items.map(item => (
-          <span key={item} style={{
-            display: "inline-flex", alignItems: "center", gap: 3,
-            fontSize: 11, padding: "2px 8px 2px 10px",
-            borderRadius: 20, background: "var(--bg-tertiary)", border: "1px solid var(--border)",
-          }}>
-            {item}
-            <button onClick={() => removeItem(item)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-muted)", fontSize: 13, lineHeight: 1, padding: 0 }}>×</button>
-          </span>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        <input
-          value={newItem}
-          onChange={e => setNewItem(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && addItem()}
-          placeholder="Add item…"
-          style={{ flex: 1, fontSize: 12, padding: "4px 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--bg)", color: "var(--fg)", outline: "none" }}
-        />
-        <button onClick={addItem} className="btn btn-primary" style={{ fontSize: 11, padding: "4px 10px" }}>Add</button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Course card (view) ───────────────────────────────────────────────
 
 function CourseCard({ course, docs }: { course: Course; docs: DocOption[] }) {
@@ -296,13 +239,6 @@ function CourseCard({ course, docs }: { course: Course; docs: DocOption[] }) {
 }
 
 // ─── Course form (add + edit) ─────────────────────────────────────────
-
-const BLANK_COURSE = {
-  name: "", institution: "SMU", year: new Date().getFullYear(),
-  summary: "", topics: "", notes: "",
-  linked_doc_ids: [] as string[],
-  is_currently_learning: false, is_self_explored: false,
-};
 
 function CourseForm({
   initial,
@@ -537,71 +473,6 @@ function CourseForm({
   );
 }
 
-// ─── Pipeline skills editor ───────────────────────────────────────────
-
-function PipelineSkillsEditor({ stages, onChange }: { stages: Stage[]; onChange: (s: Stage[]) => void }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [newSkill, setNewSkill] = useState<Record<string, string>>({});
-
-  function removeSkill(stageId: string, skill: string) {
-    onChange(stages.map(s => s.id === stageId ? { ...s, skills: s.skills.filter(sk => sk !== skill) } : s));
-  }
-
-  function addSkill(stageId: string) {
-    const val = (newSkill[stageId] || "").trim();
-    if (!val) return;
-    onChange(stages.map(s => s.id === stageId ? { ...s, skills: [...s.skills, val] } : s));
-    setNewSkill(p => ({ ...p, [stageId]: "" }));
-  }
-
-  return (
-    <div style={{ marginTop: 16, border: "1px dashed var(--accent)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
-      <div style={{ padding: "10px 14px", background: "var(--accent-light)", borderBottom: "1px dashed var(--accent)" }}>
-        <p style={{ fontSize: 11, fontWeight: 600, color: "var(--accent-text)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          Edit pipeline stage skills
-        </p>
-      </div>
-      {stages.map(stage => (
-        <div key={stage.id} style={{ borderBottom: "1px solid var(--border)" }}>
-          <button
-            onClick={() => setOpenId(openId === stage.id ? null : stage.id)}
-            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
-          >
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 2, background: stage.borderColor, display: "inline-block" }} />
-              {stage.label}
-              <span style={{ fontSize: 11, fontWeight: 400, color: "var(--fg-subtle)" }}>({stage.skills.length} skills)</span>
-            </span>
-            <span style={{ fontSize: 12, color: "var(--fg-subtle)" }}>{openId === stage.id ? "▴" : "▾"}</span>
-          </button>
-          {openId === stage.id && (
-            <div style={{ padding: "0 14px 14px" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {stage.skills.map(skill => (
-                  <span key={skill} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, padding: "3px 8px 3px 10px", borderRadius: 20, border: `1px solid ${stage.borderColor}50`, background: stage.color }}>
-                    {skill}
-                    <button onClick={() => removeSkill(stage.id, skill)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-muted)", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
-                  </span>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <input
-                  value={newSkill[stage.id] || ""}
-                  onChange={e => setNewSkill(p => ({ ...p, [stage.id]: e.target.value }))}
-                  onKeyDown={e => e.key === "Enter" && addSkill(stage.id)}
-                  placeholder="Add skill…"
-                  style={{ flex: 1, fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--bg)", color: "var(--fg)", outline: "none" }}
-                />
-                <button onClick={() => addSkill(stage.id)} className="btn btn-primary" style={{ fontSize: 12, padding: "5px 12px" }}>Add</button>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Main page ────────────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -629,20 +500,30 @@ export default function HomePage() {
       .catch(() => {});
   }, []);
 
-  // Load everything
+  // Load everything.
+  // The diagram renders from /api/skills — the curated Skill inventory
+  // (Admin → Skills) is the single source of truth. Categories with no
+  // DB skills fall back to the hardcoded defaults so it never renders blank.
   useEffect(() => {
     Promise.all([
       fetch(`${API}/courses`).then(r => r.ok ? r.json() : []),
       fetch(`${API}/courses/documents`).then(r => r.ok ? r.json() : []),
       fetch(`${API}/admin/content`).then(r => r.ok ? r.json() : {}),
-      fetch(`${API}/admin/pipeline-config`).then(r => r.ok ? r.json() : {}),
-    ]).then(([coursesData, docsData, contentData, pipelineData]) => {
+      fetch(`${API}/skills`).then(r => r.ok ? r.json() : {}) as Promise<Record<string, string[]>>,
+    ]).then(([coursesData, docsData, contentData, skillsData]) => {
       setCourses(Array.isArray(coursesData) ? coursesData : []);
       setDocs(Array.isArray(docsData) ? docsData : []);
       setContent(contentData || {});
-      // Merge saved pipeline bars over defaults
-      if (pipelineData && Object.keys(pipelineData).length > 0) {
-        setPipelineBars(prev => ({ ...prev, ...pipelineData }));
+      if (skillsData && Object.keys(skillsData).length > 0) {
+        setPipelineStages(DEFAULT_STAGES.map(s => ({
+          ...s,
+          skills: skillsData[s.id] ?? s.skills,
+        })));
+        setPipelineBars(prev => ({
+          top_bar:    { ...prev.top_bar,    items: skillsData.top_bar    ?? [] },
+          db_layer:   { ...prev.db_layer,   items: skillsData.db_layer   ?? [] },
+          bottom_bar: { ...prev.bottom_bar, items: skillsData.bottom_bar ?? [] },
+        }));
       }
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
@@ -665,18 +546,6 @@ export default function HomePage() {
       });
       setSavedMsg(`Saved`);
       setTimeout(() => setSavedMsg(null), 2000);
-    } catch {}
-  }
-
-  async function savePipelineBar(barId: string, updated: PipelineBar) {
-    setPipelineBars(prev => ({ ...prev, [barId]: updated }));
-    try {
-      await fetch(`${API}/admin/pipeline-config`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ bar_id: barId, label: updated.label, items: updated.items }),
-      });
     } catch {}
   }
 
@@ -794,23 +663,17 @@ export default function HomePage() {
           bottomBar={pipelineBars.bottom_bar}
         />
         {editMode && (
-          <>
-            <PipelineSkillsEditor stages={pipelineStages} onChange={setPipelineStages} />
-            <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-              {(["top_bar", "db_layer", "bottom_bar"] as const).map(barId => (
-                <div key={barId}>
-                  <p style={{ fontSize: 11, fontWeight: 600, color: "var(--fg-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-                    {barId === "top_bar" ? "Top bar (Project Management)" : barId === "db_layer" ? "Database layer" : "Bottom bar (Infrastructure)"}
-                  </p>
-                  <PipelineBarEditor
-                    barId={barId}
-                    bar={pipelineBars[barId]}
-                    onSave={updated => savePipelineBar(barId, updated)}
-                  />
-                </div>
-              ))}
-            </div>
-          </>
+          <div style={{
+            marginTop: 16, padding: "12px 16px",
+            border: "1px dashed var(--accent)", borderRadius: "var(--radius-md)",
+            background: "var(--accent-light)",
+          }}>
+            <p style={{ fontSize: 12, color: "var(--accent-text)", lineHeight: 1.7 }}>
+              This diagram renders from your curated skill inventory.
+              Manage it in <a href="/admin" style={{ fontWeight: 600, color: "inherit", textDecoration: "underline" }}>Admin → Skills</a> —
+              drag skills onto a category to publish them here.
+            </p>
+          </div>
         )}
       </Section>
 
