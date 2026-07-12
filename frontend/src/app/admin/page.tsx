@@ -1,11 +1,9 @@
 // frontend/src/app/admin/page.tsx
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import DrivePicker from "@/components/admin/DrivePicker";
-import SkillsBoard from "@/components/admin/SkillsBoard";
 import ProfileEditor from "@/components/admin/ProfileEditor";
-import DocReview from "@/components/admin/DocReview";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -24,22 +22,21 @@ interface Stats {
   }[];
 }
 
-const TABS = ["dashboard", "ingest", "skills", "profile", "review", "settings"] as const;
+// Skills board and doc review now live on the homepage in Curate mode —
+// edit the content where you see it.
+const TABS = ["dashboard", "ingest", "profile", "settings"] as const;
 type Tab = typeof TABS[number];
 
 export default function AdminPage() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [ingesting, setIngesting] = useState(false);
-  const [ingestLog, setIngestLog] = useState("");
-  const [jobProgress, setJobProgress] = useState<{ done: number; total: number; current: string } | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncLog, setSyncLog] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
-  const jobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -72,75 +69,26 @@ export default function AdminPage() {
     router.push("/login");
   }
 
-  async function handleIngestAll() {
-    setIngesting(true);
-    setIngestLog("");
-    setJobProgress(null);
-    try {
-      const res = await fetch(`${API}/admin/ingest/all`, { method: "POST", credentials: "include" });
-      if (!res.ok) throw new Error(await res.text());
-      const { job_id } = await res.json();
-      jobIdRef.current = job_id;
-      // Poll for progress
-      const poll = setInterval(async () => {
-        try {
-          const sr = await fetch(`${API}/admin/ingest/status/${job_id}`, { credentials: "include" });
-          const status = await sr.json();
-          setJobProgress({ done: status.done, total: status.total, current: status.current });
-          if (status.status === "done") {
-            clearInterval(poll);
-            setIngesting(false);
-            setIngestLog(`Done. ${status.done} documents ingested.\n\n${status.results.map((r: any) => `${r.title}: ${r.chunks} chunks (${r.ms}ms)`).join("\n")}`);
-            setJobProgress(null);
-            jobIdRef.current = null;
-            loadStats();
-          } else if (status.status === "cancelled") {
-            clearInterval(poll);
-            setIngesting(false);
-            setIngestLog(`Cancelled after ${status.done} document(s).\n\n${status.results.map((r: any) => `${r.title}: ${r.chunks} chunks (${r.ms}ms)`).join("\n")}`);
-            setJobProgress(null);
-            jobIdRef.current = null;
-            loadStats();
-          } else if (status.status === "error") {
-            clearInterval(poll);
-            setIngesting(false);
-            setIngestLog(`Error: ${status.error}`);
-            setJobProgress(null);
-            jobIdRef.current = null;
-          }
-        } catch { clearInterval(poll); setIngesting(false); }
-      }, 2000);
-    } catch (e: any) {
-      setIngestLog(`Error: ${e.message}`);
-      setIngesting(false);
-    }
-  }
-
-  async function cancelIngest() {
-    if (!jobIdRef.current) return;
-    try {
-      await fetch(`${API}/admin/ingest/cancel/${jobIdRef.current}`, {
-        method: "POST", credentials: "include",
-      });
-      // Poll loop picks up the "cancelled" status on its next tick
-    } catch { /* cancel is best-effort */ }
-  }
-
   async function handleSyncChanged() {
     setSyncing(true);
-    setIngestLog("");
+    setSyncLog("");
     try {
       const res = await fetch(`${API}/admin/sync`, { method: "POST", credentials: "include" });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setIngestLog(
+      const lines: string[] = [];
+      lines.push(
         data.ingested.length === 0
           ? `Everything up to date. ${data.skipped} docs unchanged.`
-          : `Synced ${data.ingested.length} changed/new doc(s):\n${data.ingested.join("\n")}\n\n${data.skipped} unchanged (skipped).`
+          : `Synced ${data.ingested.length} changed doc(s):\n${data.ingested.join("\n")}\n\n${data.skipped} unchanged (skipped).`
       );
+      if (data.new_files && data.new_files.length > 0) {
+        lines.push(`\nℹ ${data.new_files.length} new file(s) on Drive not yet ingested — use the picker below to add them:\n${data.new_files.join("\n")}`);
+      }
+      setSyncLog(lines.join("\n"));
       loadStats();
     } catch (e: any) {
-      setIngestLog(`Sync error: ${e.message}`);
+      setSyncLog(`Sync error: ${e.message}`);
     } finally {
       setSyncing(false);
     }
@@ -177,7 +125,7 @@ export default function AdminPage() {
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin dashboard</h1>
           <p style={{ fontSize: 13, color: "var(--fg-muted)", marginTop: 2 }}>
-            Welcome back, Toby
+            Welcome back, Toby — skills & note review now live on the <a href="/" style={{ color: "var(--accent-text)", fontWeight: 500 }}>homepage</a> in Curate mode
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -277,60 +225,23 @@ export default function AdminPage() {
             borderRadius: "var(--radius-md)",
             background: "var(--bg-secondary)",
           }}>
-            <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Sync & ingest</p>
+            <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Sync existing docs</p>
             <p style={{ fontSize: 13, color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.7 }}>
-              <strong>Sync changed</strong> compares Drive's <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>modifiedTime</code> against
-              the last sync and only re-ingests new or edited <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>Notes_</code> docs — run this after a study session.
-              <strong> Ingest all</strong> force-rebuilds everything (use after changing chunking settings); it's paced to stay inside the Gemini rate limit, so expect ~8s per doc.
+              Compares Drive's <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>modifiedTime</code> against
+              the last sync and re-ingests <strong>already-ingested</strong> docs that changed — run after a study session.
+              New files are only reported here; add them via the picker below.
             </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                onClick={handleSyncChanged}
-                disabled={syncing || ingesting}
-                className="btn btn-primary"
-                style={{ opacity: syncing || ingesting ? 0.6 : 1 }}
-              >
-                {syncing ? "Syncing…" : "Sync changed docs"}
-              </button>
-              <button
-                onClick={handleIngestAll}
-                disabled={ingesting || syncing}
-                className="btn btn-secondary"
-                style={{ opacity: ingesting || syncing ? 0.6 : 1 }}
-              >
-                {ingesting ? "Running in background…" : "Ingest all (full rebuild)"}
-              </button>
-              {ingesting && jobProgress && (
-                <button onClick={cancelIngest} className="btn btn-ghost" style={{ fontSize: 12 }}>
-                  Cancel after current doc
-                </button>
-              )}
-            </div>
-
-            {jobProgress && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
-                    {jobProgress.current ? `Processing: ${jobProgress.current}` : "Starting…"}
-                  </span>
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>
-                    {jobProgress.done} / {jobProgress.total || "?"}
-                  </span>
-                </div>
-                <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%",
-                    width: jobProgress.total ? `${(jobProgress.done / jobProgress.total) * 100}%` : "0%",
-                    background: "var(--accent)",
-                    borderRadius: 3,
-                    transition: "width 0.4s ease",
-                  }} />
-                </div>
-              </div>
-            )}
+            <button
+              onClick={handleSyncChanged}
+              disabled={syncing}
+              className="btn btn-primary"
+              style={{ opacity: syncing ? 0.6 : 1 }}
+            >
+              {syncing ? "Syncing…" : "Sync changed docs"}
+            </button>
           </div>
 
-          {ingestLog && (
+          {syncLog && (
             <pre style={{
               fontSize: 12, color: "var(--fg-muted)",
               background: "var(--bg-secondary)",
@@ -338,18 +249,11 @@ export default function AdminPage() {
               borderRadius: "var(--radius-md)",
               padding: "12px 16px",
               whiteSpace: "pre-wrap", wordBreak: "break-word",
-            }}>{ingestLog}</pre>
+            }}>{syncLog}</pre>
           )}
 
-          {/* Drive picker replaces the old paste-a-doc-ID input */}
+          {/* The picker is the single insertion path; batches run server-side */}
           <DrivePicker />
-        </div>
-      )}
-
-      {/* Skills tab */}
-      {tab === "skills" && (
-        <div className="fade-in">
-          <SkillsBoard />
         </div>
       )}
 
@@ -357,13 +261,6 @@ export default function AdminPage() {
       {tab === "profile" && (
         <div className="fade-in">
           <ProfileEditor />
-        </div>
-      )}
-
-      {/* Review tab */}
-      {tab === "review" && (
-        <div className="fade-in">
-          <DocReview />
         </div>
       )}
 

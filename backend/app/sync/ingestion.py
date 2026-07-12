@@ -34,16 +34,20 @@ _embed_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="embedder
 # endpoint doesn't cleanly take application/pdf. Text chat stays on the compat client.
 _genai = genai.Client(api_key=settings.gemini_api_key)
 
-# OpenAI-compat client for text-only tag/summary generation.
+# OpenAI-compat client for text-only generation (tagging, course summaries).
 _llm = AsyncOpenAI(
     api_key=settings.gemini_api_key,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-# Flash-Lite for tagging: ~15 RPM / ~1,000 RPD vs Flash's ~10 / 250, and
-# tagging is formulaic extraction — Lite is plenty. Keeps bulk ingestion
-# inside the free tier.
+# Flash-Lite for tagging: higher free-tier RPM/RPD than Flash, and tagging is
+# formulaic extraction — Lite is plenty.
 TAG_MODEL = "gemini-2.5-flash-lite"
+
+# Parse statuses persisted on Document.parse_status:
+PARSE_TEXT = "text"              # no images in doc — plain text export
+PARSE_MULTIMODAL = "multimodal"  # images present, Gemini parse succeeded
+PARSE_FALLBACK = "fallback"      # images present, parse FAILED → image-text missing
 
 _PARSE_PROMPT = (
     "Convert this document to clean Markdown. Transcribe ALL text faithfully, "
@@ -101,30 +105,32 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes, title: str) -> str:
     return resp.text or ""
 
 
-async def resolve_doc_text(google_doc_id: str, title: str) -> str:
-    """Text-only docs → instant export. Image-bearing docs → PDF → Gemini markdown
-    (captures image-text + infers headings). If the multimodal parse is rate-limited
-    past all retries (or fails for any reason), fall back to plain-text export so
-    the doc still ingests — image-text is just skipped until a later re-ingest.
-    Public: also used by the admin generate-tags endpoint."""
+async def resolve_doc_text(google_doc_id: str, title: str) -> tuple[str, str]:
+    """Returns (text, parse_status).
+    Text-only docs → instant export ('text').
+    Image-bearing docs → PDF → Gemini markdown ('multimodal').
+    If the multimodal parse fails past all retries, falls back to plain-text
+    export ('fallback') so the doc still ingests — the status is persisted and
+    surfaced in the UI so the miss is never silent."""
     has_images = await asyncio.to_thread(doc_has_images, google_doc_id)
     if not has_images:
         text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
         print(f"[ingest] {title}: text export ({len(text)} chars)")
-        return text
+        return text, PARSE_TEXT
 
     pdf = await asyncio.to_thread(export_doc_as_pdf, google_doc_id)
     try:
         md = await _with_backoff(asyncio.to_thread, _parse_pdf_to_markdown, pdf, title)
         print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")
-        return md
+        return md, PARSE_MULTIMODAL
     except Exception as e:
-        print(f"[ingest] {title}: multimodal parse failed ({e}) — falling back to "
-              f"text export; image-text skipped this run, re-ingest later to capture it")
-        return await asyncio.to_thread(export_doc_as_text, google_doc_id)
+        print(f"[ingest] {title}: multimodal parse FAILED ({e}) — text-export fallback, "
+              f"image-text missing until re-ingest")
+        text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
+        return text, PARSE_FALLBACK
 
 
-# ── Tag / summary generation ─────────────────────────────
+# ── LLM generation helpers ───────────────────────────────
 
 async def generate_doc_tags(text: str, title: str) -> dict:
     """One LLM call → {"summary": str, "skills": [str]}. Rate limits are retried
@@ -147,26 +153,55 @@ async def generate_doc_tags(text: str, title: str) -> dict:
     return {"summary": (data.get("summary") or "").strip(), "skills": skills[:12]}
 
 
-async def add_skills_to_inventory(db, names: list[str]) -> int:
-    """Upsert skill names into the inventory, case-insensitively deduped.
-    New rows land with category=None (off the public diagram until categorised)."""
-    if not names:
-        return 0
+async def generate_course_summary(course_name: str, doc_summaries: list[str]) -> str:
+    """Draft a folder-level summary from its documents' summaries.
+    Returns a draft only — the caller shows it for editing before save."""
+    joined = "\n\n".join(f"- {s}" for s in doc_summaries if s)
+    resp = await _with_backoff(
+        _llm.chat.completions.create,
+        model=TAG_MODEL,
+        messages=[
+            {"role": "system", "content": (
+                "You write a concise, professional 2-3 sentence course/module summary "
+                "for a student portfolio, synthesised from the summaries of their note "
+                "documents. Be specific about skills and knowledge demonstrated. Do not "
+                "start with 'This course'. Maximum 60 words. Return only the summary text."
+            )},
+            {"role": "user", "content": f"Module: {course_name}\n\nNote summaries:\n{joined}"},
+        ],
+        max_tokens=256,
+        temperature=0.5,
+        reasoning_effort="none",
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+# ── Skill resolution (document_skills join) ──────────────
+
+async def resolve_skills(db, names: list[str]) -> list[Skill]:
+    """Map skill names to Skill rows, case-insensitively deduped, creating any
+    that don't exist yet (category=None → off-diagram pool). Assigning the
+    returned list to Document.skills maintains the document_skills join."""
     result = await db.execute(select(Skill))
-    have = {s.name.lower() for s in result.scalars().all()}
-    created = 0
-    for name in names:
-        if name.lower() not in have:
-            db.add(Skill(name=name, category=None, achieved=True))
-            have.add(name.lower())
-            created += 1
-    return created
+    by_lower = {s.name.lower(): s for s in result.scalars().all()}
+    out = []
+    for name in dict.fromkeys(n.strip() for n in names if n and n.strip()):
+        skill = by_lower.get(name.lower())
+        if skill is None:
+            skill = Skill(name=name, category=None, achieved=True)
+            db.add(skill)
+            by_lower[name.lower()] = skill
+        out.append(skill)
+    return out
 
 
-async def _persist_document(google_doc_id: str, title: str, chunk_count: int, text: str):
-    """Upsert the Document row. INSERT path: auto-generate tags + push skills into
-    the inventory (agreed rule: auto on insert). UPDATE path: metadata only —
-    the sync flow owns needs_review, and tags are regenerated via the admin queue."""
+async def _persist_document(google_doc_id: str, title: str, chunk_count: int,
+                            text: str, parse_status: str):
+    """Upsert the Document row. INSERT path: auto-generate tags, resolve them
+    through the inventory, and link via document_skills (agreed rule: auto on
+    insert). UPDATE path: metadata only — the sync flow owns needs_review, and
+    tags are regenerated via the homepage editor. parse_status is refreshed on
+    every ingest, so a successful re-ingest clears an earlier 'fallback'."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document).where(Document.google_doc_id == google_doc_id))
         doc = result.scalar_one_or_none()
@@ -179,18 +214,18 @@ async def _persist_document(google_doc_id: str, title: str, chunk_count: int, te
             doc.title = title
             doc.chunk_count = chunk_count
         doc.last_synced_at = sa_func.now()
+        doc.parse_status = parse_status
 
         if is_new:
             try:
                 tags = await generate_doc_tags(text, title)
                 doc.summary = tags["summary"]
-                doc.skills = tags["skills"]
+                doc.skills = await resolve_skills(db, tags["skills"])
                 doc.tag_status = "approved"   # auto on insert; editable any time
-                n = await add_skills_to_inventory(db, tags["skills"])
-                print(f"[ingest] {title}: tagged ({len(tags['skills'])} skills, {n} new in inventory)")
+                print(f"[ingest] {title}: tagged ({len(doc.skills)} skills linked)")
             except Exception as e:
-                # Soft-fail: doc stays tag_status='pending' and shows in the review
-                # queue where the generate button can retry.
+                # Soft-fail: doc stays tag_status='pending' and shows flagged in
+                # the homepage editor where the generate button can retry.
                 print(f"[ingest] Tagging failed for {title}: {e} — left pending")
 
         await db.commit()
@@ -207,14 +242,15 @@ async def ingest_document(google_doc_id: str, title: str = None) -> dict:
 
     print(f"[ingest] Starting: {title} ({google_doc_id})")
 
-    text = await resolve_doc_text(google_doc_id, title)
+    text, parse_status = await resolve_doc_text(google_doc_id, title)
 
     chunks = chunk_document(text=text, doc_id=google_doc_id, doc_title=title)
     print(f"[ingest] {len(chunks)} chunks from {title}")
 
     if not chunks:
         print(f"[ingest] WARNING: 0 chunks from {title} — doc may be empty")
-        return {"doc_id": google_doc_id, "title": title, "chunk_count": 0, "elapsed_ms": 0}
+        return {"doc_id": google_doc_id, "title": title, "chunk_count": 0,
+                "elapsed_ms": 0, "parse_status": parse_status}
 
     texts = [c.text for c in chunks]
     loop = asyncio.get_event_loop()
@@ -238,47 +274,52 @@ async def ingest_document(google_doc_id: str, title: str = None) -> dict:
 
     # Persist the Document row (+ auto-tag if this is a first-time insert)
     try:
-        await _persist_document(google_doc_id, title, len(chunks), text)
+        await _persist_document(google_doc_id, title, len(chunks), text, parse_status)
     except Exception as e:
         print(f"[ingest] Document row persist failed for {title}: {e}")
 
     elapsed = round((time.time() - start) * 1000)
-    print(f"[ingest] Done: {title} — {len(chunks)} chunks in {elapsed}ms")
-    return {"doc_id": google_doc_id, "title": title, "chunk_count": len(chunks), "elapsed_ms": elapsed}
+    print(f"[ingest] Done: {title} — {len(chunks)} chunks in {elapsed}ms ({parse_status})")
+    return {"doc_id": google_doc_id, "title": title, "chunk_count": len(chunks),
+            "elapsed_ms": elapsed, "parse_status": parse_status}
 
 
-# ── Delta sync (replaces the webhook/watch design) ───────
+# ── Delta sync (UPDATE-ONLY by design) ───────────────────
 
 async def sync_changed_documents() -> dict:
-    """Delta sync: ingest new docs, re-ingest changed ones (modifiedTime vs
-    last_synced_at), skip the rest. Changed existing docs get needs_review=True."""
+    """Re-ingest docs whose Drive modifiedTime is newer than last_synced_at.
+    Deliberately does NOT insert brand-new files — insertion is a curated act
+    done through the admin Drive picker. New files are reported so they don't
+    go unnoticed. Changed docs get needs_review=True."""
     drive_docs = await list_documents()
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document))
         by_id = {d.google_doc_id: d for d in result.scalars().all()}
 
-    ingested, skipped = [], 0
+    ingested, skipped, new_files = [], 0, []
     for f in drive_docs:
         existing = by_id.get(f["id"])
-        modified = datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00"))
+        if not existing:
+            new_files.append(f["name"])
+            continue
 
-        if existing and existing.last_synced_at and modified <= existing.last_synced_at:
+        modified = datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00"))
+        if existing.last_synced_at and modified <= existing.last_synced_at:
             skipped += 1
             continue
 
-        await ingest_document(f["id"], f["name"])   # insert path auto-tags; update path doesn't
-        if existing:
-            async with AsyncSessionLocal() as db:
-                res = await db.execute(select(Document).where(Document.google_doc_id == f["id"]))
-                doc = res.scalar_one_or_none()
-                if doc:
-                    doc.needs_review = True
-                    await db.commit()
+        await ingest_document(f["id"], f["name"])   # existing row → update path, no tag overwrite
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(Document).where(Document.google_doc_id == f["id"]))
+            doc = res.scalar_one_or_none()
+            if doc:
+                doc.needs_review = True
+                await db.commit()
         ingested.append(f["name"])
 
-    print(f"[sync] {len(ingested)} ingested, {skipped} unchanged")
-    return {"ingested": ingested, "skipped": skipped}
+    print(f"[sync] {len(ingested)} re-ingested, {skipped} unchanged, {len(new_files)} new (not ingested)")
+    return {"ingested": ingested, "skipped": skipped, "new_files": new_files}
 
 
 # ── Drive listings ───────────────────────────────────────

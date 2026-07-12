@@ -1,70 +1,74 @@
 # backend/app/api/courses.py
+"""Public content for the home page: the portfolio (course folders + loose
+docs) and the skills diagram data. The old /courses CRUD, /courses/documents,
+and /courses/generate-description are gone — modules are now Documents grouped
+by an optional Course folder, edited from the homepage in edit mode."""
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
-from typing import List
-from openai import AsyncOpenAI
 
 from app.db.database import get_db
 from app.db.models import Course, Document, Skill
-from app.config import get_settings
 
 router = APIRouter()
-settings = get_settings()
-_gemini = AsyncOpenAI(
-    api_key=settings.gemini_api_key,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-)
 
-def _serialize_course(c: Course) -> dict:
+NOTES_PREFIX = "Notes_"
+
+
+def _doc_dict(d: Document) -> dict:
+    title = d.title or ""
+    display = title[len(NOTES_PREFIX):] if title.startswith(NOTES_PREFIX) else title
     return {
-        "id": str(c.id),
-        "name": c.name,
-        "institution": c.institution or "SMU",
-        "year": c.year or 0,
-        "summary": c.summary or "",
-        "topics": c.topics or [],
-        "linked_doc_ids": c.linked_doc_ids or [],
-        "is_currently_learning": c.is_currently_learning or False,
-        "is_self_explored": c.is_self_explored or False,
-        "notes": c.notes or "",
+        "id": str(d.id),
+        "google_doc_id": d.google_doc_id,
+        "title": title,
+        "display_name": display.replace("_", " ").strip() or title,
+        "summary": d.summary or "",
+        "skills": [s.name for s in d.skills],       # selectin-loaded, no lazy IO
+        "tag_status": d.tag_status or "pending",
+        "needs_review": bool(d.needs_review),
+        "parse_status": d.parse_status or "text",
+        "course_id": str(d.course_id) if d.course_id else None,
     }
 
 
-@router.get("/courses")
-async def get_courses(db: AsyncSession = Depends(get_db)):
-    """Return all courses for the home page course section."""
-    result = await db.execute(select(Course).order_by(Course.year.desc(), Course.name))
-    courses = result.scalars().all()
-    return [_serialize_course(c) for c in courses]
+@router.get("/portfolio")
+async def get_portfolio(db: AsyncSession = Depends(get_db)):
+    """Everything the modules section renders: course folders with their docs,
+    plus folder-less docs at the same level (course_id NULL still displays)."""
+    courses = (await db.execute(select(Course).order_by(Course.name))).scalars().all()
+    docs = (await db.execute(select(Document).order_by(Document.title))).scalars().all()
 
+    by_course: dict[str, list[dict]] = {}
+    loose: list[dict] = []
+    for d in docs:
+        dd = _doc_dict(d)
+        if d.course_id:
+            by_course.setdefault(str(d.course_id), []).append(dd)
+        else:
+            loose.append(dd)
 
-@router.get("/courses/documents")
-async def get_documents_for_linking(db: AsyncSession = Depends(get_db)):
-    """Ingested documents for course linking + module display (now carries
-    the LLM-generated summary/skills so linked notes can be shown richly)."""
-    result = await db.execute(select(Document).order_by(Document.title))
-    docs = result.scalars().all()
-    return [
-        {
-            "id": str(d.id),
-            "google_doc_id": d.google_doc_id,
-            "title": d.title,
-            "topic": d.topic or "",
-            "summary": d.summary or "",
-            "skills": d.skills or [],
-            "tag_status": d.tag_status or "pending",
-        }
-        for d in docs
-    ]
+    return {
+        "courses": [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "summary": c.summary or "",
+                "is_currently_learning": bool(c.is_currently_learning),
+                "notes": c.notes or "",
+                "docs": by_course.get(str(c.id), []),
+            }
+            for c in courses
+        ],
+        "loose_docs": loose,
+    }
 
 
 @router.get("/skills")
 async def get_public_skills(db: AsyncSession = Depends(get_db)):
-    """PUBLIC. Source of truth for the home page skills diagram (Phase 3).
-    Only achieved AND categorised skills appear — uncategorised inventory
-    stays private, which is the curation gate. Returns {category: [names]}."""
+    """Source of truth for the skills diagram. Only achieved AND categorised
+    skills appear — the uncategorised pool stays private (curation gate).
+    Returns {category: [names]}."""
     result = await db.execute(
         select(Skill)
         .where(Skill.achieved == True, Skill.category.isnot(None))  # noqa: E712
@@ -74,42 +78,3 @@ async def get_public_skills(db: AsyncSession = Depends(get_db)):
     for s in result.scalars().all():
         grouped.setdefault(s.category, []).append(s.name)
     return grouped
-
-
-class GenerateDescriptionRequest(BaseModel):
-    course_name: str
-    institution: str
-    topics: List[str]
-    linked_doc_titles: List[str] = []
-
-
-@router.post("/courses/generate-description")
-async def generate_description(req: GenerateDescriptionRequest):
-    """Use gemini-2.5-flash to generate a recommended course description."""
-    context_parts = [
-        f"Course: {req.course_name}",
-        f"Institution: {req.institution}",
-        f"Topics covered: {', '.join(req.topics)}" if req.topics else "",
-        f"Linked course notes/documents: {', '.join(req.linked_doc_titles)}" if req.linked_doc_titles else "",
-    ]
-    context = "\n".join(p for p in context_parts if p)
-
-    response = await _gemini.chat.completions.create(
-        model="gemini-2.5-flash",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are helping a student write a concise, professional course description "
-                    "for their portfolio. Write 2-3 sentences describing what the course covers "
-                    "and the key skills or knowledge gained. Be specific and professional. "
-                    "Do not start with 'This course' — vary the opening. Maximum 60 words."
-                ),
-            },
-            {"role": "user", "content": context},
-        ],
-        max_tokens=150,
-        temperature=0.7,
-        reasoning_effort="none",
-    )
-    return {"description": response.choices[0].message.content.strip()}
