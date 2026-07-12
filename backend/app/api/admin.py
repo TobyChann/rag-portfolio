@@ -11,7 +11,7 @@ from app.db.database import get_db
 from app.db.crud import get_stats, get_home_content, set_home_content, get_pipeline_config, upsert_pipeline_bar
 from app.db.models import Course, Document
 from app.cache.redis_client import get_redis
-from app.sync.ingestion import ingest_document, list_documents, resolve_doc_text, generate_doc_tags, add_skills_to_inventory, list_all_files
+from app.sync.ingestion import ingest_document, list_documents, resolve_doc_text, generate_doc_tags, add_skills_to_inventory, list_all_files, sync_changed_documents
 from app.config import get_settings
 
 _jobs: dict = {}
