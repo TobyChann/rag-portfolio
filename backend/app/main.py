@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import logging
 
 from app.config import get_settings
 from app.db.database import init_db
@@ -17,6 +18,11 @@ ALLOWED_ORIGINS = (
     ]
 )
 
+class _HealthFilter(logging.Filter):
+    def filter(self, record):
+        return "/api/admin/ingest/active" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

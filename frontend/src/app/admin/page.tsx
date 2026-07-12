@@ -124,17 +124,6 @@ export default function AdminPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin dashboard</h1>
-          <p style={{ fontSize: 13, color: "var(--fg-muted)", marginTop: 2 }}>
-            Welcome back, Toby — skills & note review now live on the <a href="/" style={{ color: "var(--accent-text)", fontWeight: 500 }}>homepage</a> in Curate mode
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => router.push("/planning")} className="btn btn-secondary" style={{ fontSize: 12 }}>
-            Planning chat →
-          </button>
-          <button onClick={handleLogout} className="btn btn-secondary" style={{ fontSize: 12 }}>
-            Sign out
-          </button>
         </div>
       </div>
 

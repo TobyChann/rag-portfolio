@@ -12,7 +12,7 @@ client = AsyncOpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-RAG_MODEL = "gemini-2.5-flash"
+RAG_MODEL = settings.rag_model
 
 SYSTEM_PROMPT = """You are a helpful assistant representing a job candidate's portfolio.
 Answer questions about their skills, coursework, and experience using only the provided context.

@@ -9,6 +9,9 @@ class Settings(BaseSettings):
 
     # Gemini (primary LLM)
     gemini_api_key: str = ""
+    tag_model: str = "gemini-3.1-flash-lite"
+    parse_model: str = "gemini-3.5-flash"
+    rag_model: str = "gemini-3.5-flash"
 
     # Zilliz
     zilliz_uri: str

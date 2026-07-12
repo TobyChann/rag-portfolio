@@ -57,31 +57,6 @@ async def update_feedback(db: AsyncSession, query_id: str, feedback: int):
     return query
 
 
-# --- Document ---
-
-async def upsert_document(db: AsyncSession, google_doc_id: str,
-                           title: str, topic: str, chunk_count: int):
-    result = await db.execute(
-        select(Document).where(Document.google_doc_id == google_doc_id)
-    )
-    doc = result.scalar_one_or_none()
-    if doc:
-        doc.title = title
-        doc.topic = topic
-        doc.chunk_count = chunk_count
-        from sqlalchemy.sql import func
-        doc.last_synced_at = func.now()
-    else:
-        doc = Document(
-            google_doc_id=google_doc_id,
-            title=title,
-            topic=topic,
-            chunk_count=chunk_count,
-        )
-        db.add(doc)
-    await db.flush()
-    return doc
-
 # --- Admin stats ---
 
 async def get_stats(db: AsyncSession):

@@ -42,7 +42,7 @@ _llm = AsyncOpenAI(
 
 # Flash-Lite for tagging: higher free-tier RPM/RPD than Flash, and tagging is
 # formulaic extraction — Lite is plenty.
-TAG_MODEL = "gemini-2.5-flash-lite"
+TAG_MODEL = settings.tag_model
 
 # Parse statuses persisted on Document.parse_status:
 PARSE_TEXT = "text"              # no images in doc — plain text export
@@ -92,7 +92,7 @@ async def _with_backoff(fn, *args, attempts: int = 4, base: int = 10, **kwargs):
 
 def _parse_pdf_to_markdown(pdf_bytes: bytes, title: str) -> str:
     resp = _genai.models.generate_content(
-        model="gemini-2.5-flash",
+        model=settings.parse_model,
         contents=[
             types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
             _PARSE_PROMPT,
@@ -196,16 +196,30 @@ async def resolve_skills(db, names: list[str]) -> list[Skill]:
 
 
 async def _persist_document(google_doc_id: str, title: str, chunk_count: int,
-                            text: str, parse_status: str):
-    """Upsert the Document row. INSERT path: auto-generate tags, resolve them
-    through the inventory, and link via document_skills (agreed rule: auto on
-    insert). UPDATE path: metadata only — the sync flow owns needs_review, and
-    tags are regenerated via the homepage editor. parse_status is refreshed on
-    every ingest, so a successful re-ingest clears an earlier 'fallback'."""
+                            text: str, parse_status: str) -> bool:
+    """Upsert the Document row. Tags generate on first insert AND on re-ingest
+    of any doc never successfully tagged (no summary, not approved) — a failed
+    first attempt self-heals on the next ingest. Approved docs are never
+    overwritten; edits go through the homepage editor.
+    Returns False only if tagging was needed and failed."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document).where(Document.google_doc_id == google_doc_id))
         doc = result.scalar_one_or_none()
         is_new = doc is None
+        needs_tags = is_new or (not doc.summary and doc.tag_status != "approved")
+
+        # Generate + resolve BEFORE creating/mutating the doc: resolve_skills
+        # runs a SELECT, whose autoflush would make a freshly-added doc
+        # persistent mid-function — assigning .skills after that point triggers
+        # an implicit lazy load → MissingGreenlet.
+        tags, skill_rows, tagged = None, None, False
+        if needs_tags:
+            try:
+                tags = await generate_doc_tags(text, title)
+                skill_rows = await resolve_skills(db, tags["skills"])
+                tagged = True
+            except Exception as e:
+                print(f"[ingest] Tagging FAILED for {title}: {e} — left pending")
 
         if is_new:
             doc = Document(google_doc_id=google_doc_id, title=title, chunk_count=chunk_count)
@@ -216,20 +230,14 @@ async def _persist_document(google_doc_id: str, title: str, chunk_count: int,
         doc.last_synced_at = sa_func.now()
         doc.parse_status = parse_status
 
-        if is_new:
-            try:
-                tags = await generate_doc_tags(text, title)
-                doc.summary = tags["summary"]
-                doc.skills = await resolve_skills(db, tags["skills"])
-                doc.tag_status = "approved"   # auto on insert; editable any time
-                print(f"[ingest] {title}: tagged ({len(doc.skills)} skills linked)")
-            except Exception as e:
-                # Soft-fail: doc stays tag_status='pending' and shows flagged in
-                # the homepage editor where the generate button can retry.
-                print(f"[ingest] Tagging failed for {title}: {e} — left pending")
+        if tagged:
+            doc.summary = tags["summary"]
+            doc.skills = skill_rows
+            doc.tag_status = "approved"
+            print(f"[ingest] {title}: tagged ({len(skill_rows)} skills linked)")
 
         await db.commit()
-
+        return tagged or not needs_tags
 
 # ── Main ingestion ───────────────────────────────────────
 

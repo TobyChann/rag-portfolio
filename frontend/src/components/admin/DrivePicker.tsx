@@ -118,7 +118,6 @@ export default function DrivePicker() {
       });
       if (res.status === 409) { setError("A batch is already running."); checkActive(true); return; }
       if (!res.ok) throw new Error(await res.text());
-      setSelected(new Set());
       setJob({ status: "running", done: 0, total: queue.length, current: "", results: [] });
       startPolling();
     } catch {
