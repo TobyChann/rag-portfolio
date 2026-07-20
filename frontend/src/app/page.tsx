@@ -78,7 +78,7 @@ export default function HomePage() {
   );
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px 80px" }}>
+    <main style={{ maxWidth: 820, margin: "0 auto", padding: "48px 24px 80px" }}>
 
       {/* Admin edit toggle */}
       {isAdmin && (
@@ -160,7 +160,7 @@ export default function HomePage() {
         <p className="section-label" style={{ marginTop: EDUCATION.awards.length ? 0 : 20 }}>
           Academic modules
           <span style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400, color: "var(--fg-subtle)", marginLeft: 8 }}>
-            · click to expand
+            · click a note to open
           </span>
         </p>
         <ModulesSection editMode={editMode} />

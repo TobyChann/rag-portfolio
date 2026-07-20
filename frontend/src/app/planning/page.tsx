@@ -27,6 +27,8 @@ export default function PlanningPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Owner-only page
@@ -74,6 +76,33 @@ export default function PlanningPage() {
       setMessages([]);
     } catch {
       setError("Couldn't create a chat.");
+    }
+  }
+
+  function startRename(c: ChatMeta) {
+    setRenamingId(c.id);
+    setRenameDraft(c.title);
+  }
+
+  async function commitRename(id: string) {
+    const title = renameDraft.trim();
+    setRenamingId(null);
+    if (!title) return;
+    const prev = chats;
+    setChats(c => c.map(x => x.id === id ? { ...x, title } : x));   // optimistic
+    try {
+      const res = await fetch(`${API}/planning/chats/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = await res.json();
+      setChats(c => c.map(x => x.id === id ? updated : x));
+    } catch {
+      setChats(prev);   // roll back on failure
+      setError("Couldn't rename the chat.");
     }
   }
 
@@ -151,17 +180,49 @@ export default function PlanningPage() {
                 border: `1px solid ${activeId === c.id ? "var(--accent)" : "transparent"}`,
               }}
             >
-              <span style={{
-                fontSize: 12, fontWeight: activeId === c.id ? 600 : 400,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}>
-                {c.title}
-              </span>
-              <button
-                onClick={e => { e.stopPropagation(); deleteChat(c.id); }}
-                title="Delete chat"
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)", fontSize: 13, lineHeight: 1, padding: 0, flexShrink: 0 }}
-              >×</button>
+              {renamingId === c.id ? (
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  onChange={e => setRenameDraft(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") commitRename(c.id);
+                    else if (e.key === "Escape") setRenamingId(null);
+                  }}
+                  onBlur={() => commitRename(c.id)}
+                  style={{
+                    flex: 1, minWidth: 0, fontSize: 12, padding: "2px 6px",
+                    border: "1px solid var(--accent)", borderRadius: "var(--radius-sm)",
+                    background: "var(--bg)", color: "var(--fg)", outline: "none",
+                  }}
+                />
+              ) : (
+                <span
+                  onDoubleClick={e => { e.stopPropagation(); startRename(c); }}
+                  title="Double-click to rename"
+                  style={{
+                    flex: 1, fontSize: 12, fontWeight: activeId === c.id ? 600 : 400,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}
+                >
+                  {c.title}
+                </span>
+              )}
+              {renamingId !== c.id && (
+                <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); startRename(c); }}
+                    title="Rename chat"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)", fontSize: 12, lineHeight: 1, padding: 0 }}
+                  >✎</button>
+                  <button
+                    onClick={e => { e.stopPropagation(); deleteChat(c.id); }}
+                    title="Delete chat"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)", fontSize: 13, lineHeight: 1, padding: 0 }}
+                  >×</button>
+                </span>
+              )}
             </div>
           ))}
         </div>

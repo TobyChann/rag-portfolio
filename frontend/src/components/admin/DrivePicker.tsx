@@ -9,6 +9,34 @@ interface DriveFile {
   mimeType: string;
   modifiedTime: string | null;
   ingestable: boolean;
+  ingested: boolean;
+  last_synced_at: string | null;
+  chunk_count: number;
+  parse_status: string | null;
+  needs_review: boolean;
+  changed: boolean;
+}
+
+function fmtSynced(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+const dpTh: React.CSSProperties = { padding: "4px 8px", fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" };
+const dpTd: React.CSSProperties = { padding: "7px 8px", verticalAlign: "middle" };
+
+/** One compact status chip per file so the picker doubles as a re-ingest
+ *  worklist: red/amber = needs attention, green = clean. */
+function statusChips(f: DriveFile) {
+  if (!f.ingestable) return <span style={{ fontSize: 10, color: "var(--fg-subtle)" }}>—</span>;
+  if (!f.ingested) return <span className="tag tag-gray" style={{ fontSize: 9 }}>new</span>;
+  const chips = [];
+  if (f.chunk_count === 0) chips.push(<span key="fail" className="tag tag-amber" style={{ fontSize: 9, background: "#FEF2F2", color: "#B91C1C", borderColor: "#FECACA" }}>failed · re-ingest</span>);
+  if (f.changed) chips.push(<span key="chg" className="tag tag-amber" style={{ fontSize: 9 }}>changed · re-ingest</span>);
+  if (f.parse_status === "fallback") chips.push(<span key="img" className="tag tag-amber" style={{ fontSize: 9 }} title="Text inside images not captured. Re-ingest to fix.">image text missing</span>);
+  if (f.needs_review) chips.push(<span key="rev" className="tag tag-gray" style={{ fontSize: 9 }}>review</span>);
+  if (chips.length === 0) chips.push(<span key="ok" className="tag tag-green" style={{ fontSize: 9 }}>synced</span>);
+  return chips;
 }
 
 interface BatchJob {
@@ -17,7 +45,7 @@ interface BatchJob {
   total?: number;
   current?: string;
   error?: string | null;
-  results?: { title: string; chunks: number; ms: number; parse_status: string }[];
+  results?: { title: string; chunks: number; ms: number; parse_status: string; error?: string }[];
 }
 
 function typeBadge(mime: string): string {
@@ -31,8 +59,10 @@ function typeBadge(mime: string): string {
 
 function jobLog(job: BatchJob): string {
   const lines = (job.results || []).map(r =>
-    `${r.title}: ${r.chunks} chunks (${r.ms}ms)` +
-    (r.parse_status === "fallback" ? "  ⚠ images NOT parsed — re-ingest later" : "")
+    r.parse_status === "error"
+      ? `${r.title}: ✖ failed — ${r.error || "see backend logs"} (skipped, batch continued)`
+      : `${r.title}: ${r.chunks} chunks (${r.ms}ms)` +
+        (r.parse_status === "fallback" ? "  ⚠ images NOT parsed — re-ingest later" : "")
   );
   if (job.status === "done") return `Done. ${job.done} file(s):\n${lines.join("\n")}`;
   if (job.status === "cancelled") return `Cancelled after ${job.done} file(s):\n${lines.join("\n")}`;
@@ -89,6 +119,7 @@ export default function DrivePicker() {
         if (j.status !== "running" && pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
+          load();   // batch finished — refresh sync status (last synced, chunks)
         }
       } catch {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -230,37 +261,67 @@ export default function DrivePicker() {
         <p style={{ fontSize: 13, color: "var(--fg-subtle)" }}>No files match.</p>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {shown.map((f, i) => (
-          <label key={f.id} style={{
-            display: "flex", alignItems: "center", gap: 10, padding: "10px 0",
-            borderBottom: i < shown.length - 1 ? "1px solid var(--border)" : "none",
-            cursor: f.ingestable ? "pointer" : "default",
-            opacity: f.ingestable ? 1 : 0.55,
-          }}>
-            <input
-              type="checkbox"
-              disabled={!f.ingestable || running}
-              checked={selected.has(f.id)}
-              onChange={() => toggle(f.id)}
-              style={{ flexShrink: 0 }}
-            />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <p style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {f.name}
-              </p>
-              {f.modifiedTime && (
-                <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 2 }}>
-                  Modified {new Date(f.modifiedTime).toLocaleDateString()}
-                </p>
-              )}
-            </div>
-            <span className={`tag ${f.ingestable ? "tag-green" : "tag-gray"}`} style={{ flexShrink: 0 }}>
-              {typeBadge(f.mimeType)}
-            </span>
-          </label>
-        ))}
-      </div>
+      {shown.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ color: "var(--fg-muted)", textAlign: "left" }}>
+                <th style={{ ...dpTh, width: 28 }} />
+                <th style={dpTh}>File</th>
+                <th style={dpTh}>Type</th>
+                <th style={{ ...dpTh, whiteSpace: "nowrap" }}>Last synced</th>
+                <th style={dpTh}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map(f => {
+                const sel = selected.has(f.id);
+                return (
+                  <tr
+                    key={f.id}
+                    onClick={() => { if (f.ingestable && !running) toggle(f.id); }}
+                    style={{
+                      borderTop: "1px solid var(--border)",
+                      cursor: f.ingestable && !running ? "pointer" : "default",
+                      opacity: f.ingestable ? 1 : 0.55,
+                      background: sel ? "var(--accent-light)" : "transparent",
+                    }}
+                  >
+                    <td style={dpTd}>
+                      <input
+                        type="checkbox"
+                        disabled={!f.ingestable || running}
+                        checked={sel}
+                        onChange={() => toggle(f.id)}
+                        onClick={e => e.stopPropagation()}
+                        style={{ display: "block" }}
+                      />
+                    </td>
+                    <td style={{ ...dpTd, maxWidth: 260 }}>
+                      <span style={{ display: "block", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {f.name}
+                      </span>
+                    </td>
+                    <td style={dpTd}>
+                      <span className={`tag ${f.ingestable ? "tag-green" : "tag-gray"}`} style={{ fontSize: 10 }}>
+                        {typeBadge(f.mimeType)}
+                      </span>
+                    </td>
+                    <td style={{ ...dpTd, color: "var(--fg-muted)", whiteSpace: "nowrap" }}>
+                      {fmtSynced(f.last_synced_at)}
+                    </td>
+                    <td style={dpTd}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {statusChips(f)}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

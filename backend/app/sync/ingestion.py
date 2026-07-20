@@ -62,9 +62,20 @@ _TAG_SYSTEM = (
     '  "summary": 2-3 professional sentences describing what the notes cover and the '
     "skills or knowledge they demonstrate (employer-facing, third person not needed, "
     "no 'this document' openings).\n"
-    '  "skills": an array of 3-10 short skill names an employer would recognise '
-    '(e.g. "SQL", "Credit risk modelling", "Pandas"). Use canonical names, no duplicates, '
-    "no soft skills unless clearly demonstrated.\n"
+    '  "skills": an array of 3-6 BROAD, resume-worthy competencies an employer would '
+    "scan for on a skills diagram — not a dump of every keyword in the notes.\n"
+    "Rules for skills:\n"
+    "- Prefer the general competency over the niche instance. Roll specific techniques, "
+    'algorithms, libraries, and file formats UP into the skill they demonstrate: '
+    'e.g. "K-means clustering" -> "Machine Learning"; "JSON / REST payloads" -> "API '
+    'Integration"; "pandas groupby" -> "Data Analysis"; "DCF model" -> "Financial '
+    'Modelling".\n'
+    "- Each skill should be something worth its own line on a CV. If it is too "
+    "granular to headline, generalise it or drop it.\n"
+    "- Name a specific tool ONLY when fluency in that exact tool is itself the "
+    'marketable skill (e.g. "SQL", "Python", "Power BI"). Otherwise prefer the concept.\n'
+    "- Use canonical Title Case names, no duplicates, no near-synonyms, no soft skills "
+    "unless clearly demonstrated.\n"
     "Return only the JSON object, nothing else."
 )
 
@@ -118,7 +129,17 @@ async def resolve_doc_text(google_doc_id: str, title: str) -> tuple[str, str]:
         print(f"[ingest] {title}: text export ({len(text)} chars)")
         return text, PARSE_TEXT
 
-    pdf = await asyncio.to_thread(export_doc_as_pdf, google_doc_id)
+    # PDF export is capped at ~10 MB by Drive (exportSizeLimitExceeded). Large
+    # image-heavy docs blow past it, so a failed PDF export must NOT abort the
+    # doc — fall back to plain-text export (image-text missing, flagged).
+    try:
+        pdf = await asyncio.to_thread(export_doc_as_pdf, google_doc_id)
+    except Exception as e:
+        print(f"[ingest] {title}: PDF export failed ({e}) — text-export fallback, "
+              f"image-text missing until re-ingest")
+        text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
+        return text, PARSE_FALLBACK
+
     try:
         md = await _with_backoff(asyncio.to_thread, _parse_pdf_to_markdown, pdf, title)
         print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")

@@ -16,67 +16,18 @@ export interface PipelineBar {
   items: string[];
 }
 
-const DEFAULT_TOP_BAR: PipelineBar = {
-  label: "Project Management",
-  items: ["Scrum / Agile", "Jira", "Git / GitHub", "TDD", "Software Project Management"],
-};
-
-const DEFAULT_DB_LAYER: PipelineBar = {
-  label: "Database Layer",
-  items: ["SQL", "NoSQL", "Vector DB", "PostgreSQL", "Big data concepts", "Data modeling"],
-};
-
-const DEFAULT_BOTTOM_BAR: PipelineBar = {
-  label: "Infrastructure Design",
-  items: ["Docker", "Railway", "Cloud deployment", "C4 architecture", "System design", "REST API design"],
-};
+// Bars and stages ship with NO placeholder skills — everything shown is
+// curated from the live Skill inventory. Empty category = empty on the diagram.
+const DEFAULT_TOP_BAR: PipelineBar = { label: "Project Management", items: [] };
+const DEFAULT_DB_LAYER: PipelineBar = { label: "Database Layer", items: [] };
+const DEFAULT_BOTTOM_BAR: PipelineBar = { label: "Infrastructure Design", items: [] };
 
 const STAGES: Stage[] = [
-  {
-    id: "extract",
-    label: "Extract",
-    sublabel: "Collection",
-    icon: "⬇",
-    color: "#FEF3C7",
-    borderColor: "#D4A017",
-    skills: ["Google Drive API", "REST APIs", "Web scraping", "Webhooks", "Python requests", "JSON / XML"],
-  },
-  {
-    id: "load",
-    label: "Load",
-    sublabel: "Ingestion",
-    icon: "→",
-    color: "#EFF6FF",
-    borderColor: "#3B82F6",
-    skills: ["PostgreSQL", "NoSQL", "Vector DB (Milvus)", "Supabase", "Big data concepts", "Data warehousing"],
-  },
-  {
-    id: "transform",
-    label: "Transform",
-    sublabel: "Processing",
-    icon: "⚙",
-    color: "#F0FDF4",
-    borderColor: "#22C55E",
-    skills: ["Python", "Pandas", "NumPy", "Power Query", "SQL", "dbt concepts", "Node.js", "FastAPI", "Flask", "Express", "PHP"],
-  },
-  {
-    id: "frontend",
-    label: "Frontend",
-    sublabel: "Visualise",
-    icon: "◻",
-    color: "#F5F3FF",
-    borderColor: "#8B5CF6",
-    skills: ["React", "Vue", "Next.js", "Bootstrap", "Tailwind", "EJS", "HTML / CSS", "Figma", "UI/UX design"],
-  },
-  {
-    id: "insights",
-    label: "Insights",
-    sublabel: "Analytics",
-    icon: "↗",
-    color: "#FFF1F2",
-    borderColor: "#F43F5E",
-    skills: ["Pandas", "NumPy", "Matplotlib", "Statistical modeling", "Financial analytics", "Portfolio optimization", "DCF / valuation", "Power BI / Excel"],
-  },
+  { id: "extract",   label: "Extract",   sublabel: "Collection", icon: "⬇", color: "#FEF3C7", borderColor: "#D4A017", skills: [] },
+  { id: "load",      label: "Load",      sublabel: "Ingestion",  icon: "→", color: "#EFF6FF", borderColor: "#3B82F6", skills: [] },
+  { id: "transform", label: "Transform", sublabel: "Processing", icon: "⚙", color: "#F0FDF4", borderColor: "#22C55E", skills: [] },
+  { id: "frontend",  label: "Frontend",  sublabel: "Visualise",  icon: "◻", color: "#F5F3FF", borderColor: "#8B5CF6", skills: [] },
+  { id: "insights",  label: "Insights",  sublabel: "Analytics",  icon: "↗", color: "#FFF1F2", borderColor: "#F43F5E", skills: [] },
 ];
 
 const DOMAIN = ["Finance", "Accounting", "Business Analytics"];
@@ -200,9 +151,11 @@ export default function PipelineDiagram({
                   {activeStage.label} — tools and skills
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {activeStage.skills.map(s => (
+                  {activeStage.skills.length > 0 ? activeStage.skills.map(s => (
                     <span key={s} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, background: "white", border: `1px solid ${activeStage.borderColor}50`, color: "var(--fg)", fontWeight: 500 }}>{s}</span>
-                  ))}
+                  )) : (
+                    <span style={{ fontSize: 12, color: "var(--fg-subtle)", fontStyle: "italic" }}>No skills curated for this stage yet.</span>
+                  )}
                 </div>
               </div>
             )}

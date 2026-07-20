@@ -1,6 +1,11 @@
 export type VisitorRole = "recruiter" | "hiring_manager" | "peer" | "curious";
 export type Industry = "Tech" | "Finance" | "Government" | "Healthcare" | "Other";
 
+export interface Source {
+  google_doc_id: string;
+  title: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -8,6 +13,7 @@ export interface Message {
   queryId?: string;
   feedback?: 1 | -1 | null;
   responseMs?: number;
+  sources?: Source[];
 }
 
 export interface Course {

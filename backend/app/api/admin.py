@@ -4,6 +4,7 @@ import uuid
 import asyncio
 import hashlib
 import secrets
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -325,12 +326,13 @@ class CourseUpdate(BaseModel):
     summary: Optional[str] = None
     is_currently_learning: Optional[bool] = None
     notes: Optional[str] = None
+    grade: Optional[str] = None
 
 
 def _serialize_course(c: Course) -> dict:
     return {"id": str(c.id), "name": c.name, "summary": c.summary or "",
             "is_currently_learning": bool(c.is_currently_learning),
-            "notes": c.notes or ""}
+            "notes": c.notes or "", "grade": c.grade or ""}
 
 
 @router.post("/courses", dependencies=[Depends(require_admin)])
@@ -352,6 +354,7 @@ async def update_course(course_id: str, req: CourseUpdate, db: AsyncSession = De
     if req.summary is not None: course.summary = req.summary.strip()
     if req.is_currently_learning is not None: course.is_currently_learning = req.is_currently_learning
     if req.notes is not None:   course.notes = req.notes.strip()
+    if req.grade is not None:   course.grade = req.grade.strip() or None
     await db.commit()
     await db.refresh(course)
     return _serialize_course(course)
@@ -409,24 +412,29 @@ class BatchRequest(BaseModel):
 
 async def _run_batch(docs: List[BatchDoc]):
     global _batch_job
-    try:
-        for d in docs:
-            if _batch_job.get("cancel"):
-                _batch_job["status"] = "cancelled"
-                return
-            _batch_job["current"] = d.name or d.id
+    for d in docs:
+        if _batch_job.get("cancel"):
+            _batch_job["status"] = "cancelled"
+            return
+        _batch_job["current"] = d.name or d.id
+        # Isolate each doc: one failure (bad export, parse crash, etc.) must not
+        # abort the rest of the batch. Record it and move on.
+        try:
             r = await ingest_document(d.id, d.name)
-            _batch_job["done"] += 1
             _batch_job["results"].append({
                 "title": r["title"], "chunks": r["chunk_count"],
                 "ms": r["elapsed_ms"], "parse_status": r["parse_status"],
             })
-            await asyncio.sleep(INGEST_PACING_SECONDS)
-        _batch_job["status"] = "done"
-        _batch_job["current"] = ""
-    except Exception as e:
-        _batch_job["status"] = "error"
-        _batch_job["error"] = str(e)
+        except Exception as e:
+            print(f"[batch] {d.name or d.id} FAILED: {e} — continuing")
+            _batch_job["results"].append({
+                "title": d.name or d.id, "chunks": 0, "ms": 0,
+                "parse_status": "error", "error": str(e),
+            })
+        _batch_job["done"] += 1
+        await asyncio.sleep(INGEST_PACING_SECONDS)
+    _batch_job["status"] = "done"
+    _batch_job["current"] = ""
 
 
 @router.post("/ingest/batch", dependencies=[Depends(require_admin)])
@@ -467,17 +475,36 @@ async def sync_changed():
 
 
 @router.get("/drive-files", dependencies=[Depends(require_admin)])
-async def drive_files():
-    """All files in the Drive folder for the ingestion picker.
+async def drive_files(db: AsyncSession = Depends(get_db)):
+    """All files in the Drive folder for the ingestion picker, joined with each
+    doc's ingestion status (last synced, chunk count, parse status) so the picker
+    doubles as a sync dashboard — the owner can spot what needs re-ingesting.
     Only Google Docs are ingestable; others are listed but disabled."""
     files = await list_all_files()
-    return [
-        {
+    docs = (await db.execute(select(Document))).scalars().all()
+    by_gid = {d.google_doc_id: d for d in docs}
+
+    out = []
+    for f in sorted(files, key=lambda x: x["name"].lower()):
+        doc = by_gid.get(f["id"])
+        modified = f.get("modifiedTime")
+        last_synced = doc.last_synced_at.isoformat() if (doc and doc.last_synced_at) else None
+        # "changed" = the Drive copy was edited after our last successful sync.
+        changed = bool(
+            doc and doc.last_synced_at and modified
+            and datetime.fromisoformat(modified.replace("Z", "+00:00")) > doc.last_synced_at
+        )
+        out.append({
             "id": f["id"],
             "name": f["name"],
             "mimeType": f["mimeType"],
-            "modifiedTime": f.get("modifiedTime"),
+            "modifiedTime": modified,
             "ingestable": f["mimeType"] == GOOGLE_DOC_MIME,
-        }
-        for f in sorted(files, key=lambda x: x["name"].lower())
-    ]
+            "ingested": doc is not None,
+            "last_synced_at": last_synced,
+            "chunk_count": doc.chunk_count if doc else 0,
+            "parse_status": doc.parse_status if doc else None,
+            "needs_review": bool(doc.needs_review) if doc else False,
+            "changed": changed,
+        })
+    return out

@@ -101,6 +101,7 @@ class Course(Base):
     summary = Column(Text, nullable=True)
     is_currently_learning = Column(Boolean, default=False)
     notes = Column(Text, nullable=True)
+    grade = Column(String, nullable=True)   # e.g. "A", "A-", "4.0" — free-text, owner-entered
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class ProfileNote(Base):

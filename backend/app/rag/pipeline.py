@@ -14,13 +14,31 @@ client = AsyncOpenAI(
 
 RAG_MODEL = settings.rag_model
 
+
+def _sources_from_chunks(chunks: list[dict]) -> list[dict]:
+    """Deduplicated source docs behind an answer, so the UI can link each back to
+    its note. Keeps first-seen order (highest-scoring first). Chunks without a
+    doc_id (e.g. pre-upgrade cache entries) are skipped."""
+    seen, sources = set(), []
+    for c in chunks:
+        doc_id = c.get("doc_id")
+        if not doc_id or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        sources.append({"google_doc_id": doc_id, "title": c.get("doc_title", "")})
+    return sources
+
 SYSTEM_PROMPT = """You are a helpful assistant representing a job candidate's portfolio.
 Answer questions about their skills, coursework, and experience using only the provided context.
-Be concise, professional, and specific. If the context doesn't contain relevant information,
-say so honestly rather than making things up.
+If the context doesn't contain relevant information, say so honestly rather than making things up.
 Always refer to the candidate in third person (e.g. "They studied...", "Their experience includes...").
-Write in plain prose. Do not use markdown formatting (no **, *, #, or bullet symbols) —
-the chat window renders plain text only. If listing things, list them naturally in a sentence.
+
+Style — keep it skimmable, not verbose:
+- Open with one short sentence answering the question directly (max ~20 words).
+- Then give the specifics as bullet points, one per line, each starting with "- ".
+- Keep each bullet to a single tight line. Aim for 2-5 bullets; fewer is fine.
+- Do NOT use other markdown (no **, *, #, tables). Plain text with "- " bullets only.
+- Don't repeat the question or pad with filler. If one sentence fully answers it, skip the bullets.
 """
 
 
@@ -42,6 +60,7 @@ async def run_rag_query(question: str) -> dict:
         return {
             "answer": cached["answer"],
             "chunks": cached["chunks"],
+            "sources": _sources_from_chunks(cached["chunks"]),
             "response_ms": 0,
             "cache_hit": "redis",
         }
@@ -56,6 +75,7 @@ async def run_rag_query(question: str) -> dict:
         return {
             "answer": "I couldn't find relevant information about that in the portfolio documents.",
             "chunks": [],
+            "sources": [],
             "response_ms": round((time.time() - start) * 1000),
             "cache_hit": None,
         }
@@ -83,13 +103,17 @@ async def run_rag_query(question: str) -> dict:
     answer = response.choices[0].message.content
     elapsed = round((time.time() - start) * 1000)
 
-    # 6. Cache for next time
-    chunk_meta = [{"doc_title": c["doc_title"], "heading": c["heading"], "score": c["score"]} for c in chunks]
+    # 6. Cache for next time. Keep doc_id so cached answers can still link sources.
+    chunk_meta = [
+        {"doc_id": c["doc_id"], "doc_title": c["doc_title"], "heading": c["heading"], "score": c["score"]}
+        for c in chunks
+    ]
     await set_cached_answer(question, answer, chunk_meta)
 
     return {
         "answer": answer,
         "chunks": chunk_meta,
+        "sources": _sources_from_chunks(chunk_meta),
         "response_ms": elapsed,
         "cache_hit": None,
     }

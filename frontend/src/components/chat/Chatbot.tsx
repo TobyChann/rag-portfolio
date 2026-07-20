@@ -3,6 +3,10 @@ import { useState, useRef, useEffect } from "react";
 import { onboard, sendQuery, sendFeedback } from "@/lib/api";
 import { Message, VisitorRole, Industry } from "@/types";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+interface DocInfo { name: string; summary: string; skills: string[]; course: string; }
+
 let _id = 0;
 const uid = () => String(++_id);
 
@@ -54,11 +58,13 @@ const S = {
         background: "var(--bg-secondary)", color: "var(--fg)",
         fontSize: 12, padding: "8px 11px", borderRadius: "var(--radius-md)",
         maxWidth: "90%", lineHeight: 1.6, alignSelf: "flex-start",
+        whiteSpace: "pre-wrap" as const,   // render "- " bullet lines on their own line
     },
     msgUser: {
         background: "var(--accent)", color: "#fff",
         fontSize: 12, padding: "8px 11px", borderRadius: "var(--radius-md)",
         maxWidth: "90%", lineHeight: 1.6, alignSelf: "flex-end",
+        whiteSpace: "pre-wrap" as const,
     },
 };
 
@@ -71,9 +77,31 @@ export default function Chatbot() {
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [docMap, setDocMap] = useState<Record<string, DocInfo>>({});
+    const [openSource, setOpenSource] = useState<string | null>(null);
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+    // Load the note map once the panel opens, so answer "sources" can link to a
+    // note's summary. Public endpoint — no auth needed.
+    useEffect(() => {
+        if (!open || Object.keys(docMap).length > 0) return;
+        (async () => {
+            try {
+                const res = await fetch(`${API}/portfolio`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const map: Record<string, DocInfo> = {};
+                const add = (d: any, course: string) => {
+                    map[d.google_doc_id] = { name: d.display_name, summary: d.summary, skills: d.skills || [], course };
+                };
+                (data.courses || []).forEach((c: any) => (c.docs || []).forEach((d: any) => add(d, c.name)));
+                (data.loose_docs || []).forEach((d: any) => add(d, ""));
+                setDocMap(map);
+            } catch { /* sources just won't link — non-fatal */ }
+        })();
+    }, [open, docMap]);
 
     useEffect(() => {
         const stored = localStorage.getItem("portfolio_session");
@@ -99,7 +127,7 @@ export default function Chatbot() {
         setLoading(true);
         try {
             const res = await sendQuery(q, sessionId);
-            setMessages(p => [...p, { id: uid(), role: "assistant", content: res.answer, queryId: res.query_id, feedback: null }]);
+            setMessages(p => [...p, { id: uid(), role: "assistant", content: res.answer, queryId: res.query_id, feedback: null, sources: res.sources || [] }]);
         } catch (e: any) {
             if (e.message?.includes("Session expired")) {
                 // Redis lost the session (e.g. container restart) — drop back to onboarding
@@ -140,7 +168,7 @@ export default function Chatbot() {
                     <div style={S.header}>
                         <div>
                             <p style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Ask about my profile</p>
-                            <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>RAG-powered · gemini-2.5-flash</p>
+                            <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>RAG-powered · Gemini 3.5 Flash</p>
                         </div>
                         <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: "var(--fg-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 2px" }}>×</button>
                     </div>
@@ -198,6 +226,52 @@ export default function Chatbot() {
                                 {messages.map(msg => (
                                     <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
                                         <div style={msg.role === "user" ? S.msgUser : S.msgBot}>{msg.content}</div>
+
+                                        {/* Linked notes behind the answer — click to peek at the summary */}
+                                        {msg.role === "assistant" && (() => {
+                                            const known = (msg.sources || []).filter(s => docMap[s.google_doc_id]);
+                                            if (known.length === 0) return null;
+                                            return (
+                                                <div style={{ maxWidth: "90%", marginTop: 5 }}>
+                                                    <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>From your notes</p>
+                                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                                        {known.map(s => {
+                                                            const key = `${msg.id}:${s.google_doc_id}`;
+                                                            const info = docMap[s.google_doc_id];
+                                                            const isOpen = openSource === key;
+                                                            return (
+                                                                <button key={key} onClick={() => setOpenSource(isOpen ? null : key)} style={{
+                                                                    fontSize: 11, padding: "3px 9px", borderRadius: 20, cursor: "pointer",
+                                                                    border: `1px solid ${isOpen ? "var(--accent)" : "var(--border)"}`,
+                                                                    background: isOpen ? "var(--accent-light)" : "var(--bg)",
+                                                                    color: isOpen ? "var(--accent-text)" : "var(--fg-muted)", transition: "all .15s",
+                                                                }}>{info.name}</button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    {known.map(s => {
+                                                        const key = `${msg.id}:${s.google_doc_id}`;
+                                                        if (openSource !== key) return null;
+                                                        const info = docMap[s.google_doc_id];
+                                                        return (
+                                                            <div key={key} style={{ marginTop: 6, padding: "9px 11px", background: "var(--bg-secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+                                                                <p style={{ fontSize: 12, fontWeight: 600 }}>{info.name}</p>
+                                                                {info.course && <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginTop: 1 }}>{info.course}</p>}
+                                                                <p style={{ fontSize: 11.5, color: "var(--fg-muted)", lineHeight: 1.6, marginTop: 5 }}>
+                                                                    {info.summary || <span style={{ fontStyle: "italic" }}>No summary yet.</span>}
+                                                                </p>
+                                                                {info.skills.length > 0 && (
+                                                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                                                                        {info.skills.map(sk => <span key={sk} className="tag tag-blue" style={{ fontSize: 9 }}>{sk}</span>)}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            );
+                                        })()}
+
                                         {msg.role === "assistant" && msg.queryId && (
                                             <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
                                                 {([1, -1] as const).map(v => (

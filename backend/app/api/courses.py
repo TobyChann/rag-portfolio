@@ -29,6 +29,8 @@ def _doc_dict(d: Document) -> dict:
         "needs_review": bool(d.needs_review),
         "parse_status": d.parse_status or "text",
         "course_id": str(d.course_id) if d.course_id else None,
+        "last_synced_at": d.last_synced_at.isoformat() if d.last_synced_at else None,
+        "chunk_count": d.chunk_count or 0,
     }
 
 
@@ -56,6 +58,7 @@ async def get_portfolio(db: AsyncSession = Depends(get_db)):
                 "summary": c.summary or "",
                 "is_currently_learning": bool(c.is_currently_learning),
                 "notes": c.notes or "",
+                "grade": c.grade or "",
                 "docs": by_course.get(str(c.id), []),
             }
             for c in courses

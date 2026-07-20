@@ -241,7 +241,9 @@ export default function AdminPage() {
             }}>{syncLog}</pre>
           )}
 
-          {/* The picker is the single insertion path; batches run server-side */}
+          {/* The picker is the single insertion path; batches run server-side.
+              It also shows each file's last-synced date + status so a half-finished
+              ingest is easy to reconcile. */}
           <DrivePicker />
         </div>
       )}

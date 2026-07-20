@@ -97,6 +97,7 @@ async def query(
             "query_id": None,
             "cache_hit": result["cache_hit"],
             "response_ms": result["response_ms"],
+            "sources": result.get("sources", []),
         }
 
     return {
@@ -104,6 +105,7 @@ async def query(
         "query_id": str(logged.id),
         "cache_hit": result["cache_hit"],
         "response_ms": result["response_ms"],
+        "sources": result.get("sources", []),
     }
 
 

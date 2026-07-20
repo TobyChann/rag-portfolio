@@ -218,6 +218,10 @@ async def send_message(chat_id: str, req: MessageCreate, db: AsyncSession = Depe
     assistant_msg = ChatMessage(chat_id=chat.id, role="assistant", content=answer)
     db.add(assistant_msg)
     await db.commit()
+    # Refresh chat too: its updated_at (onupdate=func.now()) is server-generated,
+    # so SQLAlchemy expires it after commit. Serializing it without an explicit
+    # async refresh triggers a lazy reload outside greenlet context → MissingGreenlet.
+    await db.refresh(chat)
     await db.refresh(user_msg)
     await db.refresh(assistant_msg)
 
