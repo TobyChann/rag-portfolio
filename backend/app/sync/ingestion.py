@@ -15,6 +15,7 @@ from app.sync.google_client import (
     export_doc_as_text,
     export_doc_as_pdf,
     doc_has_images,
+    get_doc_inline_images,
     list_docs_in_folder,
     list_all_files_in_folder,
     get_doc_metadata,
@@ -55,6 +56,19 @@ _PARSE_PROMPT = (
     "(#, ##, ###) from the visual layout and font sizes. Do not summarise, add, or "
     "omit anything. Output only Markdown."
 )
+
+_IMG_OCR_PROMPT = (
+    "These images are figures, diagrams, screenshots, or scanned pages from a "
+    "student's study notes. Transcribe ALL text visible in them faithfully — "
+    "including labels, axes, and captions inside diagrams and charts. Preserve "
+    "structure as Markdown where it helps. If an image has no readable text, skip "
+    "it. Output only the transcribed text, no commentary."
+)
+
+# How many images to send per Gemini call. Batching keeps the request count (and
+# thus free-tier RPM/RPD usage) low for image-heavy docs, while staying well
+# under the per-request payload limits.
+_IMG_OCR_BATCH = 6
 
 _TAG_SYSTEM = (
     "You extract portfolio metadata from a student's course notes. "
@@ -116,6 +130,61 @@ def _parse_pdf_to_markdown(pdf_bytes: bytes, title: str) -> str:
     return resp.text or ""
 
 
+def _ocr_image_batch(batch: list[tuple[bytes, str]]) -> str:
+    """OCR a handful of images in one multimodal call."""
+    parts = [types.Part.from_bytes(data=data, mime_type=mime) for data, mime in batch]
+    parts.append(_IMG_OCR_PROMPT)
+    resp = _genai.models.generate_content(
+        model=settings.parse_model,
+        contents=parts,
+        config=types.GenerateContentConfig(
+            temperature=0.0,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
+    )
+    return resp.text or ""
+
+
+async def _transcribe_images(images: list[tuple[bytes, str]], title: str) -> str:
+    """OCR every inline image in batches, retried with backoff. Returns the
+    combined transcription (empty if none of the images held text)."""
+    out = []
+    for i in range(0, len(images), _IMG_OCR_BATCH):
+        batch = images[i:i + _IMG_OCR_BATCH]
+        text = await _with_backoff(asyncio.to_thread, _ocr_image_batch, batch)
+        if text.strip():
+            out.append(text.strip())
+    return "\n\n".join(out)
+
+
+async def _recover_with_image_ocr(google_doc_id: str, title: str) -> tuple[str, str]:
+    """Fallback used when the whole-doc PDF path fails (e.g. Drive's ~10 MB export
+    cap on large image-heavy docs). Exports the body text, then downloads and OCRs
+    each inline image individually so image-text is still captured. Returns
+    ('multimodal') when images were recovered, else ('fallback')."""
+    text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
+    try:
+        images = await asyncio.to_thread(get_doc_inline_images, google_doc_id)
+    except Exception as e:
+        print(f"[ingest] {title}: couldn't fetch inline images ({e}) — text only")
+        return text, PARSE_FALLBACK
+
+    if not images:
+        return text, PARSE_FALLBACK
+
+    try:
+        img_text = await _transcribe_images(images, title)
+    except Exception as e:
+        print(f"[ingest] {title}: per-image OCR failed ({e}) — text only")
+        return text, PARSE_FALLBACK
+
+    if img_text.strip():
+        print(f"[ingest] {title}: recovered image-text from {len(images)} image(s) via per-image OCR")
+        return f"{text}\n\n# Transcribed from images\n\n{img_text}", PARSE_MULTIMODAL
+
+    return text, PARSE_FALLBACK
+
+
 async def resolve_doc_text(google_doc_id: str, title: str) -> tuple[str, str]:
     """Returns (text, parse_status).
     Text-only docs → instant export ('text').
@@ -131,24 +200,20 @@ async def resolve_doc_text(google_doc_id: str, title: str) -> tuple[str, str]:
 
     # PDF export is capped at ~10 MB by Drive (exportSizeLimitExceeded). Large
     # image-heavy docs blow past it, so a failed PDF export must NOT abort the
-    # doc — fall back to plain-text export (image-text missing, flagged).
+    # doc — recover via per-image OCR, which has no whole-file size limit.
     try:
         pdf = await asyncio.to_thread(export_doc_as_pdf, google_doc_id)
     except Exception as e:
-        print(f"[ingest] {title}: PDF export failed ({e}) — text-export fallback, "
-              f"image-text missing until re-ingest")
-        text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
-        return text, PARSE_FALLBACK
+        print(f"[ingest] {title}: PDF export failed ({e}) — recovering via per-image OCR")
+        return await _recover_with_image_ocr(google_doc_id, title)
 
     try:
         md = await _with_backoff(asyncio.to_thread, _parse_pdf_to_markdown, pdf, title)
         print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")
         return md, PARSE_MULTIMODAL
     except Exception as e:
-        print(f"[ingest] {title}: multimodal parse FAILED ({e}) — text-export fallback, "
-              f"image-text missing until re-ingest")
-        text = await asyncio.to_thread(export_doc_as_text, google_doc_id)
-        return text, PARSE_FALLBACK
+        print(f"[ingest] {title}: whole-doc parse FAILED ({e}) — recovering via per-image OCR")
+        return await _recover_with_image_ocr(google_doc_id, title)
 
 
 # ── LLM generation helpers ───────────────────────────────

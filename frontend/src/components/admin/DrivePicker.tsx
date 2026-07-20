@@ -166,7 +166,6 @@ export default function DrivePicker() {
   const running = job.status === "running";
   const shown = files.filter(f => f.name.toLowerCase().includes(filter.toLowerCase()));
   const selectableShown = shown.filter(f => f.ingestable);
-  const notesShown = selectableShown.filter(f => f.name.startsWith("Notes_"));
   const selectedCount = files.filter(f => selected.has(f.id) && f.ingestable).length;
   const finishedLog = jobLog(job);
 
@@ -182,8 +181,8 @@ export default function DrivePicker() {
       <p style={{ fontSize: 13, color: "var(--fg-muted)", marginBottom: 12, lineHeight: 1.7 }}>
         Tick files and start a batch — it runs on the backend (paced for the Gemini
         rate limit), so you can close this tab and progress will still be here when
-        you come back. "Select Notes_" is the full rebuild. New Drive files only
-        enter the corpus from here; sync never inserts them.
+        you come back. Tip: filter "Notes_" then Select all for a full rebuild. New
+        Drive files only enter the corpus from here; sync never inserts them.
       </p>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
@@ -197,11 +196,6 @@ export default function DrivePicker() {
             background: "var(--bg)", color: "var(--fg)", outline: "none",
           }}
         />
-        <button
-          onClick={() => setSelected(new Set(notesShown.map(f => f.id)))}
-          disabled={running}
-          className="btn btn-ghost" style={{ fontSize: 12 }}
-        >Select Notes_ ({notesShown.length})</button>
         <button
           onClick={() => setSelected(new Set(selectableShown.map(f => f.id)))}
           disabled={running}

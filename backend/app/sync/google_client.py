@@ -1,5 +1,6 @@
 # backend/app/sync/google_client.py
 from google.oauth2 import service_account
+from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import build
 from app.config import get_settings
 
@@ -85,6 +86,37 @@ def doc_has_images(doc_id: str) -> bool:
     docs = get_docs_service()
     doc = docs.documents().get(documentId=doc_id).execute()
     return bool(doc.get("inlineObjects"))
+
+
+def get_doc_inline_images(doc_id: str) -> list[tuple[bytes, str]]:
+    """Download each inline image in the Doc individually via the Docs API's
+    per-image contentUri. This sidesteps Drive's ~10 MB whole-file export cap:
+    every image is fetched on its own, so arbitrarily large image-heavy docs
+    still yield their pictures for OCR. Returns [(image_bytes, mime_type)].
+    Bad/expired image URLs are skipped, never fatal."""
+    creds = _get_credentials()
+    doc = build("docs", "v1", credentials=creds).documents().get(documentId=doc_id).execute()
+    inline = doc.get("inlineObjects", {})
+    if not inline:
+        return []
+
+    session = AuthorizedSession(creds)
+    images: list[tuple[bytes, str]] = []
+    for obj in inline.values():
+        try:
+            embedded = obj["inlineObjectProperties"]["embeddedObject"]
+            uri = embedded.get("imageProperties", {}).get("contentUri")
+            if not uri:
+                continue
+            resp = session.get(uri, timeout=30)
+            if resp.status_code == 200 and resp.content:
+                mime = resp.headers.get("Content-Type", "image/png").split(";")[0].strip()
+                if not mime.startswith("image/"):
+                    mime = "image/png"
+                images.append((resp.content, mime))
+        except Exception as e:
+            print(f"[docimg] skipped an inline image in {doc_id}: {e}")
+    return images
 
 
 def get_doc_metadata(doc_id: str) -> dict:
