@@ -1,18 +1,46 @@
 # backend/app/rag/pipeline.py
+import asyncio
 import time
 from openai import AsyncOpenAI
 from app.rag.embedder import embed_query
 from app.rag.retriever import retrieve
 from app.cache.query_cache import get_cached_answer, set_cached_answer
 from app.config import get_settings
+from app.llm_errors import is_transient_llm_error
 
 settings = get_settings()
-client = AsyncOpenAI(
-    api_key=settings.gemini_api_key,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-)
 
-RAG_MODEL = settings.rag_model
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# Visitor answers run on OpenAI when a funded key is configured — it avoids the
+# free-tier 503 "high demand" errors Gemini throws at unpaid traffic. Flip
+# rag_provider to "gemini" (or drop the OpenAI key) to fall back.
+_use_openai = settings.rag_provider == "openai" and bool(settings.openai_api_key)
+if _use_openai:
+    client = AsyncOpenAI(api_key=settings.openai_api_key)   # default OpenAI base
+    RAG_MODEL = settings.openai_rag_model
+    _EXTRA_PARAMS: dict = {}   # OpenAI chat models reject reasoning_effort
+else:
+    client = AsyncOpenAI(api_key=settings.gemini_api_key, base_url=GEMINI_BASE)
+    RAG_MODEL = settings.rag_model
+    _EXTRA_PARAMS = {"reasoning_effort": "none"}   # Gemini: keep thinking off
+
+
+# Transient errors get a quick retry. A visitor is waiting, so retries are few
+# and short rather than the long backoff used for batch ingestion.
+async def _complete_with_retry(**kwargs):
+    """chat.completions.create with a couple of short retries on transient
+    overload (503/UNAVAILABLE), rate-limit, or network blips."""
+    delay = 1.5
+    for attempt in range(3):
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except Exception as e:
+            if attempt < 2 and is_transient_llm_error(e):
+                await asyncio.sleep(delay)
+                delay *= 2
+                continue
+            raise
 
 
 def _sources_from_chunks(chunks: list[dict]) -> list[dict]:
@@ -86,10 +114,10 @@ async def run_rag_query(question: str) -> dict:
         for c in chunks
     )
 
-    # 5. Generate the answer.
-    # reasoning_effort="none" is critical on Gemini 2.5: thinking tokens count
-    # against max_tokens and were truncating visitor answers mid-sentence.
-    response = await client.chat.completions.create(
+    # 5. Generate the answer. On Gemini, reasoning_effort="none" keeps thinking
+    # tokens from eating max_tokens and truncating the answer; OpenAI models omit
+    # that param (see _EXTRA_PARAMS). Retries ride out transient 503 spikes.
+    response = await _complete_with_retry(
         model=RAG_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -97,7 +125,7 @@ async def run_rag_query(question: str) -> dict:
         ],
         max_tokens=1024,
         temperature=0.2,  # Low temp = more factual, less creative
-        reasoning_effort="none",
+        **_EXTRA_PARAMS,
     )
 
     answer = response.choices[0].message.content

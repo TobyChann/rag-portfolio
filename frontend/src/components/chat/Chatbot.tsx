@@ -79,6 +79,7 @@ export default function Chatbot() {
     const [error, setError] = useState("");
     const [docMap, setDocMap] = useState<Record<string, DocInfo>>({});
     const [openSource, setOpenSource] = useState<string | null>(null);
+    const [answerModel, setAnswerModel] = useState("");
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -102,6 +103,16 @@ export default function Chatbot() {
             } catch { /* sources just won't link — non-fatal */ }
         })();
     }, [open, docMap]);
+
+    // Ask the backend which model answers, so the header never names a model
+    // that isn't the one actually configured (e.g. after a Gemini fallback).
+    useEffect(() => {
+        if (!open || answerModel) return;
+        fetch(`${API}/meta`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => { if (d?.answer_model) setAnswerModel(d.answer_model); })
+            .catch(() => { /* header just omits the model name */ });
+    }, [open, answerModel]);
 
     useEffect(() => {
         const stored = localStorage.getItem("portfolio_session");
@@ -168,7 +179,7 @@ export default function Chatbot() {
                     <div style={S.header}>
                         <div>
                             <p style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Ask about my profile</p>
-                            <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>RAG-powered · Gemini 3.5 Flash</p>
+                            <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>RAG-powered{answerModel && ` · ${answerModel}`}</p>
                         </div>
                         <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: "var(--fg-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 2px" }}>×</button>
                     </div>

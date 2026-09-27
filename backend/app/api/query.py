@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.rag.pipeline import run_rag_query
+from app.rag.pipeline import run_rag_query, RAG_MODEL
+from app.llm_errors import is_transient_llm_error
 from app.db.database import get_db
 from app.db.crud import log_query, update_feedback, create_visitor
 from app.cache.rate_limiter import check_rate_limit
@@ -77,6 +78,11 @@ async def query(
         result = await run_rag_query(req.question)
     except Exception as e:
         print(f"[query] RAG pipeline error: {e}")
+        if is_transient_llm_error(e):
+            raise HTTPException(
+                status_code=503,
+                detail="The model is briefly busy. Please try again in a moment.",
+            )
         raise HTTPException(status_code=500, detail=f"RAG pipeline error: {str(e)}")
 
     try:
@@ -107,6 +113,13 @@ async def query(
         "response_ms": result["response_ms"],
         "sources": result.get("sources", []),
     }
+
+
+@router.get("/meta")
+async def meta():
+    """Public: which model answers visitor queries, so the chat UI never
+    advertises a different model than the one actually configured."""
+    return {"answer_model": RAG_MODEL}
 
 
 @router.post("/feedback")
@@ -143,8 +156,11 @@ async def debug_health():
     except Exception as e:
         results["zilliz"] = f"FAIL: {e}"
 
-    # OpenAI key present
-    import os
-    results["gemini_key"] = "set" if os.getenv("GEMINI_API_KEY") else "MISSING"
+    # LLM keys present, and which model is answering
+    from app.config import get_settings
+    s = get_settings()
+    results["openai_key"] = "set" if s.openai_api_key else "MISSING"
+    results["gemini_key"] = "set" if s.gemini_api_key else "MISSING"
+    results["answer_model"] = RAG_MODEL
 
     return results

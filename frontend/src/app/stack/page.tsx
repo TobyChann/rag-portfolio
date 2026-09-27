@@ -34,21 +34,22 @@ const LEGENDS: Record<Tab, { color: string; label: string }[]> = {
 
 const INGESTION_STEPS = [
   { num:"01", title:"Source and sync", body:"Notes live as Google Docs in a Drive folder, read through a service account with a read-only scope (no OAuth flow). New notes are added deliberately through the admin Drive picker; a delta sync then compares each Doc's modifiedTime against its stored last_synced_at and re-ingests only the documents that actually changed.", tags:["Google Drive API","Service account","Delta sync"] },
-  { num:"02", title:"Multimodal parsing", body:"Text-only Docs are exported straight to text. Docs containing images, diagrams, or screenshots are exported as PDF and passed to Gemini 3.5 Flash, which transcribes every visible character — including text baked into images — and infers heading levels into clean Markdown. If that parse fails, it falls back to a plain-text export and flags the note so the miss is never silent.", tags:["Gemini 3.5 Flash","PDF export","Fallback status"] },
+  { num:"02", title:"Multimodal parsing", body:"Text-only Docs are exported straight to text. Docs containing images, diagrams, or screenshots are exported as PDF and passed to Gemini 3.5 Flash, which transcribes every visible character — including text baked into images — and infers heading levels into clean Markdown. Docs too large for Drive's ~10 MB PDF export (or whose whole-doc parse fails) are recovered by exporting the body text and OCRing each inline image in small batches. Rate-limit and 503 overload errors are retried with exponential backoff; only if every route fails does the note fall back to plain text, flagged so the miss is never silent.", tags:["Gemini 3.5 Flash","PDF export","Per-image OCR","Fallback status"] },
   { num:"03", title:"Chunking and embedding", body:"Markdown is split at heading boundaries to preserve topic context, with long sections further split at roughly 20% character overlap. Each chunk is embedded locally with all-MiniLM-L6-v2 (384 dimensions) via sentence-transformers — no external API call and zero embedding cost.", tags:["all-MiniLM-L6-v2","sentence-transformers","384-dim"] },
-  { num:"04", title:"Storage and tagging", body:"Chunks are deleted and re-upserted per document into Zilliz Cloud (managed Milvus), so re-ingesting a note atomically replaces its stale vectors and nothing else. Document metadata, chunk counts, and sync timestamps are tracked in Supabase Postgres via async SQLAlchemy. A separate Gemini 3.1 Flash Lite pass drafts a summary and extracts skill tags for the portfolio.", tags:["Zilliz Cloud","PyMilvus","Supabase","Gemini 3.1 Flash Lite"] },
+  { num:"04", title:"Storage and tagging", body:"Chunks are deleted and re-upserted per document into Zilliz Cloud (managed Milvus), so re-ingesting a note atomically replaces its stale vectors and nothing else. Document metadata, chunk counts, and sync timestamps are tracked in Supabase Postgres via async SQLAlchemy. A separate Gemini 3.1 Flash Lite pass drafts a summary and extracts skill tags for the portfolio; tags are never overwritten once approved, and re-synced notes are flagged for review.", tags:["Zilliz Cloud","PyMilvus","Supabase","Gemini 3.1 Flash Lite"] },
 ];
 
 const RAG_STEPS = [
   { num:"01", title:"Rate limiting and session", body:"Incoming visitor queries hit /query, which first checks Redis for a per-IP rate-limit counter (20 per hour, 1-hour TTL) and a valid session token created during onboarding. Rejected requests never reach the embedding model or the LLM.", tags:["Redis","FastAPI dependency"] },
   { num:"02", title:"Cache check", body:"The question is normalised and SHA-256 hashed into a Redis key holding previous answers. A cache hit returns the stored answer instantly with zero LLM cost; entries live for 24 hours.", tags:["Redis","SHA-256 hash","24h TTL"] },
   { num:"03", title:"Semantic vector search", body:"On a miss, the query is embedded with the same all-MiniLM-L6-v2 model used at ingestion (metric consistency matters) and run as an ANN search against Zilliz using cosine similarity. The top K=5 chunks are returned with their source titles and headings.", tags:["Zilliz ANN","Cosine similarity","K=5"] },
-  { num:"04", title:"Answer generation", body:"The five retrieved chunks are injected into an engineered system prompt alongside the question and sent to Gemini 3.5 Flash through its OpenAI-compatible endpoint (the official openai SDK — no LangChain). Temperature is 0.2 for factual answers, output is capped at 1024 tokens, and thinking is disabled so the whole budget goes to the visible reply. The answer is then written back to the Redis cache.", tags:["Gemini 3.5 Flash","openai SDK","temp=0.2"] },
+  { num:"04", title:"Answer generation", body:"The five retrieved chunks are injected into an engineered system prompt alongside the question and sent to gpt-4o-mini via the OpenAI API (the official openai SDK — no LangChain). A funded key here avoids the free-tier 503 spikes that hit visitor traffic; transient errors are retried briefly. Temperature is 0.2 for factual answers, output capped at 1024 tokens, and the reply is written back to the Redis cache.", tags:["gpt-4o-mini","openai SDK","temp=0.2"] },
 ];
 
 const JUSTIFICATIONS = [
   { component:"Vector search metric",   choice:"Cosine similarity",              reason:"Best suited to the normalized embeddings from all-MiniLM-L6-v2, giving consistent scores independent of chunk length." },
   { component:"Embedding model",         choice:"all-MiniLM-L6-v2 (local)",       reason:"Runs locally inside the container with zero API cost or latency. 384 dimensions balances quality and storage efficiency." },
+  { component:"Answer LLM",              choice:"gpt-4o-mini (paid key)",         reason:"Visitors are waiting on this call, so it runs on a funded OpenAI key instead of Gemini's free tier, which throws 503 \"high demand\" errors under load. Cheap per reply, and it falls back to Gemini automatically if the key is removed." },
   { component:"Document parser",         choice:"Gemini 3.5 Flash (multimodal)",  reason:"Transcribes text baked into images, diagrams, and screenshots that a plain text export silently drops — one model, no separate OCR or layout dependency." },
   { component:"Backend runtime",         choice:"Docker + Uvicorn (long-lived)",  reason:"A persistent containerised process avoids serverless cold-start and timeout penalties — a full RAG query can take 15 to 25 seconds end to end." },
   { component:"Cache strategy",          choice:"Redis exact-match",              reason:"A SHA-256 match eliminates identical repeat queries instantly at zero cost. Semantic (embedding-based) caching is the next planned upgrade." },
@@ -60,7 +61,9 @@ const STACK = [
   { name:"Next.js",              role:"Frontend framework",     reason:"App Router and React with file-based routing for the portfolio, chat, and admin surfaces.",         tag:"frontend" },
   { name:"Zilliz Cloud",         role:"Vector database",        reason:"Managed Milvus — stores and searches the 384-dim chunk embeddings with cosine ANN.",                tag:"ai" },
   { name:"all-MiniLM-L6-v2",    role:"Embedding model",        reason:"Local HuggingFace model run via sentence-transformers — zero API cost, strong semantic recall.",    tag:"ai" },
-  { name:"Gemini 3.5 Flash",     role:"LLM + multimodal parse", reason:"Google's model, via its OpenAI-compatible endpoint: generates RAG answers and transcribes image-bearing notes to Markdown.", tag:"ai" },
+  { name:"gpt-4o-mini",          role:"Answer LLM",             reason:"Funded OpenAI key for visitor RAG answers — dodges the free-tier 503s that hit unpaid traffic, at a fraction of a cent per reply.", tag:"ai" },
+  { name:"Gemini 3.5 Flash",     role:"Ingestion LLM",          reason:"Native PDF/image input on the free tier: transcribes image-bearing notes to Markdown and OCRs oversized docs image-by-image.", tag:"ai" },
+  { name:"Gemini 2.5 Flash",     role:"Planning assistant",     reason:"Owner-only career-planning chat grounded in the notes and skill board; thinking stays on here because reasoning matters more than latency.", tag:"ai" },
   { name:"Gemini 3.1 Flash Lite",role:"Auto-tagging",           reason:"Higher free-tier throughput for the formulaic pass that drafts note summaries and extracts skills.",  tag:"ai" },
   { name:"sentence-transformers",role:"Embedding runtime",      reason:"Runs the MiniLM model locally inside the container for both ingestion and query embedding.",         tag:"ai" },
   { name:"Supabase",             role:"Postgres database",      reason:"Managed Postgres for document metadata, sync timestamps, visitor logs, and query history.",          tag:"data" },
@@ -156,7 +159,8 @@ export default function StackPage() {
         }}>
           {[
             ["Embedding model","all-MiniLM-L6-v2 · 384-dim"],
-            ["LLM","Gemini 3.5 Flash"],
+            ["Answer LLM","gpt-4o-mini"],
+            ["Ingestion LLM","Gemini 3.5 Flash"],
             ["Vector DB","Zilliz Cloud (Milvus)"],
             ["Backend","FastAPI · Docker"],
             ["Frontend","Next.js · React"],
@@ -206,8 +210,9 @@ export default function StackPage() {
 
         <Collapsible title="Pipeline A: Ingestion engine" badge="write path" defaultOpen>
           <p style={{ fontSize:13, color:"var(--fg-muted)", lineHeight:1.7, marginBottom:20 }}>
-            Triggered automatically whenever a Google Doc is edited. Only the changed document
-            is re-processed. The rest of the corpus is untouched.
+            New notes are added deliberately through the admin Drive picker. A delta sync then
+            re-processes only the documents edited since their last sync. The rest of the corpus
+            is untouched.
           </p>
           <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
             {INGESTION_STEPS.map((s,i) => (

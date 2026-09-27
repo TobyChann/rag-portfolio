@@ -26,6 +26,7 @@ from app.rag.retriever import upsert_chunks, delete_chunks_for_doc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Document, Skill
 from app.config import get_settings
+from app.llm_errors import is_transient_llm_error
 
 settings = get_settings()
 
@@ -97,20 +98,22 @@ _TAG_SYSTEM = (
 # ── Rate-limit resilience ────────────────────────────────
 
 async def _with_backoff(fn, *args, attempts: int = 4, base: int = 10, **kwargs):
-    """Retry rate-limited LLM calls with exponential backoff (10s, 20s, 40s, 80s).
-    Non-rate-limit errors raise immediately."""
+    """Retry transient LLM failures with exponential backoff (10s, 20s, 40s, 80s).
+    Non-transient errors raise immediately."""
     for i in range(attempts):
         try:
             return await fn(*args, **kwargs)
         except Exception as e:
-            msg = str(e)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate" in msg.lower():
+            # Rate limits AND 503 overload spikes ("high demand"/UNAVAILABLE):
+            # unretried, those silently sent image-heavy docs down the
+            # text-only fallback path.
+            if is_transient_llm_error(e):
                 wait = base * (2 ** i)
-                print(f"[llm] rate limited, retrying in {wait}s ({i + 1}/{attempts})")
+                print(f"[llm] transient error, retrying in {wait}s ({i + 1}/{attempts}): {e}")
                 await asyncio.sleep(wait)
                 continue
             raise
-    raise RuntimeError("Rate limit: retries exhausted")
+    raise RuntimeError("LLM transient error: retries exhausted")
 
 
 # ── Text resolution (parse step) ─────────────────────────

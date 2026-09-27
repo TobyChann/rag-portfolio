@@ -4,10 +4,16 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # OpenAI (kept for any legacy references)
+    # OpenAI — funded key, used for the visitor-facing RAG answer (reliable, no
+    # free-tier 503s). Ingestion stays on Gemini's free tier.
     openai_api_key: str = ""
+    openai_rag_model: str = "gpt-4o-mini"
 
-    # Gemini (primary LLM)
+    # Which provider answers visitor queries: "openai" or "gemini".
+    # Falls back to Gemini automatically if openai_api_key is empty.
+    rag_provider: str = "openai"
+
+    # Gemini (ingestion: parsing, image OCR, tagging; owner planning chat)
     gemini_api_key: str = ""
     tag_model: str = "gemini-3.1-flash-lite"
     parse_model: str = "gemini-3.5-flash"
