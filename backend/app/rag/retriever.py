@@ -114,3 +114,16 @@ async def retrieve(query_vector: list[float], top_k: int = TOP_K) -> list[dict]:
         }
         for hit in results[0]
     ]
+
+
+async def keep_alive() -> None:
+    """One tiny real read so the cluster registers activity. Free-tier Zilliz
+    clusters are stopped after a stretch of inactivity; a scheduled sync calls
+    this so the cluster stays up even when no notes changed."""
+    client = get_client()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        _zilliz_executor,
+        lambda: client.query(collection_name=settings.zilliz_collection,
+                             filter="chunk_index >= 0", output_fields=["doc_id"], limit=1),
+    )

@@ -21,7 +21,7 @@ from app.sync.google_client import (
 )
 from app.rag.chunker import chunk_document
 from app.rag.embedder import _encode_texts
-from app.rag.retriever import upsert_chunks, delete_chunks_for_doc
+from app.rag.retriever import upsert_chunks, delete_chunks_for_doc, keep_alive
 from app.db.database import AsyncSessionLocal
 from app.db.models import Document, Skill
 from app.config import get_settings
@@ -66,6 +66,15 @@ _IMG_OCR_PROMPT = (
 # thus free-tier RPM/RPD usage) low for image-heavy docs, while staying well
 # under the per-request payload limits.
 _IMG_OCR_BATCH = 6
+
+# A multimodal parse longer than this multiple of the doc's plain text is treated
+# as degenerate. The floor keeps short docs full of image-text from tripping it.
+_MAX_PARSE_RATIO = 8
+_MIN_PARSE_BUDGET = 20_000
+
+# Text-only fallbacks retried per sync, so a quota-limited day self-heals over
+# the next few syncs without one run burning the whole free-tier budget.
+_FALLBACK_RETRIES_PER_SYNC = 3
 
 _TAG_SYSTEM = (
     "You extract portfolio metadata from a student's course notes. "
@@ -208,11 +217,21 @@ async def resolve_doc_text(google_doc_id: str, title: str) -> tuple[str, str]:
 
     try:
         md = await _with_backoff(asyncio.to_thread, _parse_pdf_to_markdown, pdf, title)
-        print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")
-        return md, PARSE_MULTIMODAL
     except Exception as e:
         print(f"[ingest] {title}: whole-doc parse FAILED ({e}) — recovering via per-image OCR")
         return await _recover_with_image_ocr(google_doc_id, title)
+
+    # Guard against degenerate output: a parse that loops or invents content
+    # can come back many times longer than the doc itself (one note produced
+    # ~1 MB of Markdown from ~30k chars and flooded the index with junk chunks).
+    text_len = len(await asyncio.to_thread(export_doc_as_text, google_doc_id))
+    if len(md) > _MAX_PARSE_RATIO * max(text_len, _MIN_PARSE_BUDGET):
+        print(f"[ingest] {title}: parse output implausibly long ({len(md)} vs {text_len} "
+              f"chars of text) — recovering via per-image OCR")
+        return await _recover_with_image_ocr(google_doc_id, title)
+
+    print(f"[ingest] {title}: multimodal parse ({len(md)} chars, image-text captured)")
+    return md, PARSE_MULTIMODAL
 
 
 # ── LLM generation helpers ───────────────────────────────
@@ -405,6 +424,11 @@ async def sync_changed_documents() -> dict:
 
 
 async def _sync_locked() -> dict:
+    try:
+        await keep_alive()
+    except Exception as e:
+        print(f"[sync] Zilliz keep-alive failed (cluster stopped?): {e}")
+
     drive_docs = await list_documents()   # Notes_* Google Docs only
 
     async with AsyncSessionLocal() as db:
@@ -412,6 +436,7 @@ async def _sync_locked() -> dict:
         by_id = {d.google_doc_id: d for d in result.scalars().all()}
 
     ingested, added, failed, skipped, new_files = [], [], [], 0, []
+    fallback_retries = 0
     for f in drive_docs:
         existing = by_id.get(f["id"])
         if not existing:
@@ -420,9 +445,16 @@ async def _sync_locked() -> dict:
                 continue
         else:
             modified = datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00"))
-            if existing.last_synced_at and modified <= existing.last_synced_at:
+            unchanged = existing.last_synced_at and modified <= existing.last_synced_at
+            # Unchanged docs whose image-text parse failed last time get a
+            # bounded retry, so they upgrade once Gemini quota is available.
+            retry = (unchanged and existing.parse_status == PARSE_FALLBACK
+                     and fallback_retries < _FALLBACK_RETRIES_PER_SYNC)
+            if unchanged and not retry:
                 skipped += 1
                 continue
+            if retry:
+                fallback_retries += 1
 
         # One bad doc must not abort the rest of the sync.
         try:
