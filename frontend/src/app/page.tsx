@@ -19,7 +19,7 @@ const EDUCATION = {
   degree: "BSc (Information Systems, Business Analytics)",
   double: "Bachelor of Accountancy (double degree)",
   period: "Aug 2023 – Nov 2027",
-  gpa: "3.93 / 4.30",               // empty hides the badge
+  gpa: "3.93 / 4.00",               // empty hides the badge
   awards: ["Dean's List AY23/24", "Dean's List AY24/25", "Dean's List AY25/26",
            "SCIS Achievements Scholarship", "Teaching Assistant, IS430 Digital Payments and Innovation"],
 };

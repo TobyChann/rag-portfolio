@@ -48,7 +48,10 @@ Guidelines:
 - Prioritise: if asked what to do, give an ordered shortlist, not an exhaustive dump.
 - Your knowledge of fast-moving facts (current hiring climate, this year's admissions,
   specific course codes) may be outdated or wrong — say so instead of inventing specifics.
-- Plain prose, no markdown symbols."""
+- Format replies in Markdown like a normal chat assistant: short paragraphs, bullet or
+  numbered lists where they help, **bold** for key terms, and ### headings only for
+  long answers. No horizontal rules, no tables unless comparing options.
+- Open with the answer itself. Never open with praise or a recap of the owner's profile."""
 
 
 # ── Context assembly (the "memory") ─────────────────────

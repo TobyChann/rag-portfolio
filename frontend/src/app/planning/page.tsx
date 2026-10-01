@@ -2,6 +2,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { API_BASE as API } from "@/lib/api";
 
 interface ChatMeta {
@@ -254,13 +256,18 @@ export default function PlanningPage() {
                 borderRadius: "var(--radius-md)",
                 fontSize: 13,
                 lineHeight: 1.7,
-                whiteSpace: "pre-wrap",
+                // User text keeps its line breaks; assistant replies are Markdown.
+                whiteSpace: m.role === "user" ? "pre-wrap" : "normal",
                 background: m.role === "user" ? "var(--accent)" : "var(--bg-secondary)",
                 color: m.role === "user" ? "#fff" : "var(--fg)",
                 border: m.role === "user" ? "none" : "1px solid var(--border)",
               }}
             >
-              {m.content}
+              {m.role === "user" ? m.content : (
+                <div className="md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                </div>
+              )}
             </div>
           ))}
           {sending && (

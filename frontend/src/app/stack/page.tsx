@@ -56,6 +56,18 @@ const JUSTIFICATIONS = [
   { component:"Sync mechanism",          choice:"Delta sync on modifiedTime",     reason:"A scheduled job compares Drive's modifiedTime against the last sync and re-processes only changed docs — no full re-index. A lock keeps scheduled syncs and manual batches from ever ingesting the same doc twice." },
 ];
 
+// How each part scales past a single portfolio's traffic: what's in place now,
+// and the next step when it's needed. Kept honest — "next" items aren't built.
+const SCALING = [
+  { area:"Stateless API",        now:"Admin sessions, rate-limit counters and the answer cache live in Redis, not in process memory.", next:"Run several backend replicas behind a load balancer with no code change." },
+  { area:"Relational data",      now:"Postgres through async SQLAlchemy + asyncpg. DATABASE_URL is the only coupling to the provider.", next:"Move between Supabase, self-hosted Postgres or a managed service by changing one variable; add PgBouncer and read replicas for connection-heavy load." },
+  { area:"LLM cost and latency", now:"Exact-match Redis cache, per-IP rate limiting, short low-temperature answers, brief retries on provider overload.", next:"Semantic caching (embedding similarity) to also catch paraphrased repeat questions." },
+  { area:"Ingestion",            now:"Background task in the API process, one job at a time behind a lock, per-document failure isolation.", next:"A Redis-backed job queue with separate workers, so heavy parsing never competes with visitor queries." },
+  { area:"Scheduling",           now:"Daily delta sync via an interval loop or an authenticated cron endpoint; each run also keeps the vector DB active.", next:"With multiple replicas, trigger only through the cron endpoint and swap the in-process lock for a Redis lock." },
+  { area:"Vector search",        now:"Zilliz Cloud (managed Milvus), cosine ANN over a few thousand 384-dim chunks.", next:"Milvus scales to millions of vectors; at this size pgvector inside Postgres is the leaner option." },
+  { area:"Embeddings",           now:"all-MiniLM-L6-v2 on CPU inside the API container: no per-call cost.", next:"Split into its own service, or batch on a GPU, if ingestion volume grows." },
+];
+
 const STACK = [
   { name:"FastAPI",              role:"Backend framework",      reason:"Async Python with automatic OpenAPI docs — a natural fit for I/O-bound RAG endpoints.",              tag:"backend" },
   { name:"Next.js",              role:"Frontend framework",     reason:"App Router and React with file-based routing for the portfolio, chat, and admin surfaces.",         tag:"frontend" },
@@ -190,9 +202,9 @@ export default function StackPage() {
         </p>
         <div key={activeTab} className="fade-in">
           <PinchZoomImage
-            src={`/diagrams/${activeTab}.png`}
+            src={`/diagrams/${activeTab.toUpperCase()}.png`}
             alt={`C4 ${activeTab.toUpperCase()} architecture diagram`}
-            fallbackLabel={`Drop public/diagrams/${activeTab}.png to load this diagram`}
+            fallbackLabel={`Drop public/diagrams/${activeTab.toUpperCase()}.png to load this diagram`}
           />
         </div>
         <div style={{ display:"flex", flexWrap:"wrap", gap:16, marginTop:12, marginBottom:32 }}>
@@ -246,6 +258,32 @@ export default function StackPage() {
                 <span style={{ fontSize:12, color:"var(--fg-muted)", fontWeight:500 }}>{j.component}</span>
                 <span style={{ fontSize:12, fontWeight:600 }}>{j.choice}</span>
                 <span style={{ fontSize:12, color:"var(--fg-muted)", lineHeight:1.7 }}>{j.reason}</span>
+              </div>
+            ))}
+          </div>
+        </Collapsible>
+
+        <Collapsible title="Scaling path" badge={`${SCALING.length} areas`}>
+          <p style={{ fontSize:13, color:"var(--fg-muted)", lineHeight:1.7, marginBottom:12 }}>
+            Built for a portfolio's traffic, but with the seams in place to grow. Each row is what
+            runs today and the next step when load demands it.
+          </p>
+          <div style={{ display:"flex", flexDirection:"column" }}>
+            {SCALING.map((r,i) => (
+              <div key={r.area} style={{
+                display:"grid",
+                gridTemplateColumns:"minmax(110px,140px) 1fr 1fr",
+                gap:16, padding:"12px 0",
+                borderBottom: i<SCALING.length-1 ? "1px solid var(--border)" : "none",
+                alignItems:"start",
+              }}>
+                <span style={{ fontSize:12, fontWeight:600 }}>{r.area}</span>
+                <span style={{ fontSize:12, color:"var(--fg-muted)", lineHeight:1.7 }}>
+                  <span style={{ fontWeight:600, color:"var(--fg)" }}>Now · </span>{r.now}
+                </span>
+                <span style={{ fontSize:12, color:"var(--fg-muted)", lineHeight:1.7 }}>
+                  <span style={{ fontWeight:600, color:"var(--fg)" }}>Next · </span>{r.next}
+                </span>
               </div>
             ))}
           </div>
