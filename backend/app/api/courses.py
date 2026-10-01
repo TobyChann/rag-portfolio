@@ -9,10 +9,9 @@ from sqlalchemy import select
 
 from app.db.database import get_db
 from app.db.models import Course, Document, Skill
+from app.sync.google_client import NOTES_PREFIX
 
 router = APIRouter()
-
-NOTES_PREFIX = "Notes_"
 
 
 def _doc_dict(d: Document) -> dict:
@@ -38,7 +37,10 @@ def _doc_dict(d: Document) -> dict:
 async def get_portfolio(db: AsyncSession = Depends(get_db)):
     """Everything the modules section renders: course folders with their docs,
     plus folder-less docs at the same level (course_id NULL still displays)."""
-    courses = (await db.execute(select(Course).order_by(Course.name))).scalars().all()
+    # Modules in progress first, then alphabetical.
+    courses = (await db.execute(
+        select(Course).order_by(Course.is_currently_learning.desc(), Course.name)
+    )).scalars().all()
     docs = (await db.execute(select(Document).order_by(Document.title))).scalars().all()
 
     by_course: dict[str, list[dict]] = {}

@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from openai import AsyncOpenAI
 
 from app.db.database import get_db
 from app.db.models import Chat, ChatMessage, ProfileNote, Skill
@@ -21,21 +20,19 @@ from app.api.admin import require_admin
 from app.rag.embedder import embed_query
 from app.rag.retriever import retrieve
 from app.config import get_settings
+from app.llm import gemini_client
 
 settings = get_settings()
 
 # Every route in this router is owner-only.
 router = APIRouter(dependencies=[Depends(require_admin)])
 
-_llm = AsyncOpenAI(
-    api_key=settings.gemini_api_key,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-)
+_llm = gemini_client()
 
 # Planning is the ONE path where thinking stays ON (deliberately no
 # reasoning_effort="none"): we want reasoning here, and the generous
 # max_tokens leaves room for thinking + a full visible answer.
-PLANNING_MODEL = "gemini-2.5-flash"
+PLANNING_MODEL = settings.planning_model
 MAX_HISTORY = 20
 
 PLANNING_SYSTEM = """You are the owner's personal career-planning assistant inside their portfolio app.

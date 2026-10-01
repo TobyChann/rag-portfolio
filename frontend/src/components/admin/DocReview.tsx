@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { API_BASE as API } from "@/lib/api";
 
 interface DocRow {
   id: string;

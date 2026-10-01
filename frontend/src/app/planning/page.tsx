@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { API_BASE as API } from "@/lib/api";
 
 interface ChatMeta {
   id: string;

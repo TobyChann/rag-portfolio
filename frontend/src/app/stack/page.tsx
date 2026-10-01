@@ -33,7 +33,7 @@ const LEGENDS: Record<Tab, { color: string; label: string }[]> = {
 };
 
 const INGESTION_STEPS = [
-  { num:"01", title:"Source and sync", body:"Notes live as Google Docs in a Drive folder, read through a service account with a read-only scope (no OAuth flow). New notes are added deliberately through the admin Drive picker; a delta sync then compares each Doc's modifiedTime against its stored last_synced_at and re-ingests only the documents that actually changed.", tags:["Google Drive API","Service account","Delta sync"] },
+  { num:"01", title:"Source and sync", body:"Notes live as Google Docs in a Drive folder, read through a service account with a read-only scope (no OAuth flow). A scheduled delta sync (daily via Vercel Cron, or an in-process interval on the backend) compares each Doc's modifiedTime against its stored last_synced_at, re-ingests only the documents that changed, and picks up new notes named with the Notes_ prefix. Anything else is added deliberately through the admin Drive picker.", tags:["Google Drive API","Service account","Delta sync","Vercel Cron"] },
   { num:"02", title:"Multimodal parsing", body:"Text-only Docs are exported straight to text. Docs containing images, diagrams, or screenshots are exported as PDF and passed to Gemini 3.5 Flash, which transcribes every visible character — including text baked into images — and infers heading levels into clean Markdown. Docs too large for Drive's ~10 MB PDF export (or whose whole-doc parse fails) are recovered by exporting the body text and OCRing each inline image in small batches. Rate-limit and 503 overload errors are retried with exponential backoff; only if every route fails does the note fall back to plain text, flagged so the miss is never silent.", tags:["Gemini 3.5 Flash","PDF export","Per-image OCR","Fallback status"] },
   { num:"03", title:"Chunking and embedding", body:"Markdown is split at heading boundaries to preserve topic context, with long sections further split at roughly 20% character overlap. Each chunk is embedded locally with all-MiniLM-L6-v2 (384 dimensions) via sentence-transformers — no external API call and zero embedding cost.", tags:["all-MiniLM-L6-v2","sentence-transformers","384-dim"] },
   { num:"04", title:"Storage and tagging", body:"Chunks are deleted and re-upserted per document into Zilliz Cloud (managed Milvus), so re-ingesting a note atomically replaces its stale vectors and nothing else. Document metadata, chunk counts, and sync timestamps are tracked in Supabase Postgres via async SQLAlchemy. A separate Gemini 3.1 Flash Lite pass drafts a summary and extracts skill tags for the portfolio; tags are never overwritten once approved, and re-synced notes are flagged for review.", tags:["Zilliz Cloud","PyMilvus","Supabase","Gemini 3.1 Flash Lite"] },
@@ -53,7 +53,7 @@ const JUSTIFICATIONS = [
   { component:"Document parser",         choice:"Gemini 3.5 Flash (multimodal)",  reason:"Transcribes text baked into images, diagrams, and screenshots that a plain text export silently drops — one model, no separate OCR or layout dependency." },
   { component:"Backend runtime",         choice:"Docker + Uvicorn (long-lived)",  reason:"A persistent containerised process avoids serverless cold-start and timeout penalties — a full RAG query can take 15 to 25 seconds end to end." },
   { component:"Cache strategy",          choice:"Redis exact-match",              reason:"A SHA-256 match eliminates identical repeat queries instantly at zero cost. Semantic (embedding-based) caching is the next planned upgrade." },
-  { component:"Sync mechanism",          choice:"Delta sync on modifiedTime",     reason:"Re-ingestion compares Drive's modifiedTime against the last sync and re-processes only changed docs — no full re-index. New files are added deliberately via the picker." },
+  { component:"Sync mechanism",          choice:"Delta sync on modifiedTime",     reason:"A scheduled job compares Drive's modifiedTime against the last sync and re-processes only changed docs — no full re-index. A lock keeps scheduled syncs and manual batches from ever ingesting the same doc twice." },
 ];
 
 const STACK = [
@@ -210,8 +210,8 @@ export default function StackPage() {
 
         <Collapsible title="Pipeline A: Ingestion engine" badge="write path" defaultOpen>
           <p style={{ fontSize:13, color:"var(--fg-muted)", lineHeight:1.7, marginBottom:20 }}>
-            New notes are added deliberately through the admin Drive picker. A delta sync then
-            re-processes only the documents edited since their last sync. The rest of the corpus
+            Runs on a schedule (or on demand from the admin panel). Only documents edited since
+            their last sync are re-processed, new Notes_ docs are added, and the rest of the corpus
             is untouched.
           </p>
           <div style={{ display:"flex", flexDirection:"column", gap:1 }}>

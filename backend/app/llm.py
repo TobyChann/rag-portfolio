@@ -1,7 +1,18 @@
-# backend/app/llm_errors.py
+# backend/app/llm.py
+"""Shared LLM plumbing: the Gemini client and transient-error classification."""
 import re
 
 import openai
+
+from app.config import get_settings
+
+# Gemini's OpenAI-compatible endpoint — lets the official openai SDK talk to Gemini.
+GEMINI_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+def gemini_client() -> openai.AsyncOpenAI:
+    return openai.AsyncOpenAI(api_key=get_settings().gemini_api_key, base_url=GEMINI_OPENAI_BASE)
+
 
 # HTTP statuses that mean "try again shortly": rate limit, and 5xx overload /
 # gateway blips (Gemini's free tier throws 503 "high demand" under load).

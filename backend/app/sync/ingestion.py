@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from openai import AsyncOpenAI
 from google import genai
 from google.genai import types
 from sqlalchemy import select
@@ -26,7 +25,7 @@ from app.rag.retriever import upsert_chunks, delete_chunks_for_doc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Document, Skill
 from app.config import get_settings
-from app.llm_errors import is_transient_llm_error
+from app.llm import gemini_client, is_transient_llm_error
 
 settings = get_settings()
 
@@ -37,10 +36,7 @@ _embed_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="embedder
 _genai = genai.Client(api_key=settings.gemini_api_key)
 
 # OpenAI-compat client for text-only generation (tagging, course summaries).
-_llm = AsyncOpenAI(
-    api_key=settings.gemini_api_key,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-)
+_llm = gemini_client()
 
 # Flash-Lite for tagging: higher free-tier RPM/RPD than Flash, and tagging is
 # formulaic extraction — Lite is plenty.
@@ -253,8 +249,11 @@ async def generate_course_summary(course_name: str, doc_summaries: list[str]) ->
             {"role": "system", "content": (
                 "You write a concise, professional 2-3 sentence course/module summary "
                 "for a student portfolio, synthesised from the summaries of their note "
-                "documents. Be specific about skills and knowledge demonstrated. Do not "
-                "start with 'This course'. Maximum 60 words. Return only the summary text."
+                "documents. Be specific about the topics covered and skills practised. "
+                "Plain, factual tone: no 'Mastery'/'Mastered'/'Master' openings, no "
+                "superlatives or claims of expertise, and do not start with 'This course'. "
+                "Only mention topics present in the note summaries. Maximum 60 words. "
+                "Return only the summary text."
             )},
             {"role": "user", "content": f"Module: {course_name}\n\nNote summaries:\n{joined}"},
         ],
@@ -381,32 +380,61 @@ async def ingest_document(google_doc_id: str, title: str = None) -> dict:
             "elapsed_ms": elapsed, "parse_status": parse_status}
 
 
-# ── Delta sync (UPDATE-ONLY by design) ───────────────────
+# ── Delta sync ───────────────────────────────────────────
+
+# One ingestion writer at a time: sync runs (manual, cron, or the periodic loop)
+# and picker batches all take this lock, so the same doc is never ingested twice
+# concurrently and Gemini traffic never doubles up.
+ingest_lock = asyncio.Lock()
+
+
+class SyncBusy(RuntimeError):
+    """Raised when a sync is requested while another ingestion holds the lock."""
+
 
 async def sync_changed_documents() -> dict:
     """Re-ingest docs whose Drive modifiedTime is newer than last_synced_at.
-    Deliberately does NOT insert brand-new files — insertion is a curated act
-    done through the admin Drive picker. New files are reported so they don't
-    go unnoticed. Changed docs get needs_review=True."""
-    drive_docs = await list_documents()
+    Brand-new docs are ingested too when they follow the Notes_ naming
+    convention and settings.sync_ingest_new_notes is on; anything else is only
+    reported (insertion of arbitrary files stays a curated act via the picker).
+    Re-ingested docs get needs_review=True."""
+    if ingest_lock.locked():
+        raise SyncBusy("Another sync or ingestion batch is running")
+    async with ingest_lock:
+        return await _sync_locked()
+
+
+async def _sync_locked() -> dict:
+    drive_docs = await list_documents()   # Notes_* Google Docs only
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document))
         by_id = {d.google_doc_id: d for d in result.scalars().all()}
 
-    ingested, skipped, new_files = [], 0, []
+    ingested, added, failed, skipped, new_files = [], [], [], 0, []
     for f in drive_docs:
         existing = by_id.get(f["id"])
         if not existing:
-            new_files.append(f["name"])
+            if not settings.sync_ingest_new_notes:
+                new_files.append(f["name"])
+                continue
+        else:
+            modified = datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00"))
+            if existing.last_synced_at and modified <= existing.last_synced_at:
+                skipped += 1
+                continue
+
+        # One bad doc must not abort the rest of the sync.
+        try:
+            await ingest_document(f["id"], f["name"])
+        except Exception as e:
+            print(f"[sync] {f['name']} FAILED: {e}")
+            failed.append(f["name"])
             continue
 
-        modified = datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00"))
-        if existing.last_synced_at and modified <= existing.last_synced_at:
-            skipped += 1
+        if not existing:
+            added.append(f["name"])
             continue
-
-        await ingest_document(f["id"], f["name"])   # existing row → update path, no tag overwrite
         async with AsyncSessionLocal() as db:
             res = await db.execute(select(Document).where(Document.google_doc_id == f["id"]))
             doc = res.scalar_one_or_none()
@@ -415,8 +443,23 @@ async def sync_changed_documents() -> dict:
                 await db.commit()
         ingested.append(f["name"])
 
-    print(f"[sync] {len(ingested)} re-ingested, {skipped} unchanged, {len(new_files)} new (not ingested)")
-    return {"ingested": ingested, "skipped": skipped, "new_files": new_files}
+    print(f"[sync] {len(ingested)} re-ingested, {len(added)} added, {len(failed)} failed, "
+          f"{skipped} unchanged, {len(new_files)} new (not ingested)")
+    return {"ingested": ingested, "added": added, "failed": failed,
+            "skipped": skipped, "new_files": new_files}
+
+
+async def auto_sync_loop(interval_minutes: int):
+    """Background task for long-lived hosts: delta sync every N minutes.
+    Skips a tick (rather than queueing) when an ingestion is already running."""
+    while True:
+        await asyncio.sleep(interval_minutes * 60)
+        try:
+            await sync_changed_documents()
+        except SyncBusy:
+            print("[sync] auto-sync skipped: ingestion already running")
+        except Exception as e:
+            print(f"[sync] auto-sync failed: {e}")
 
 
 # ── Drive listings ───────────────────────────────────────

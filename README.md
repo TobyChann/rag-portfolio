@@ -13,7 +13,9 @@ Frontend: Next.js · Tailwind · Vercel
 Create `backend/.env` with:
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ZILLIZ_URI`, `ZILLIZ_TOKEN`, `DATABASE_URL`, `REDIS_URL`,
 `GOOGLE_DRIVE_FOLDER_ID`, `ADMIN_PASSWORD_HASH` (optional: `RAG_PROVIDER=gemini` to answer on Gemini instead,
-`OPENAI_RAG_MODEL`, `TAG_MODEL`, `PARSE_MODEL`, `RAG_MODEL`, `HF_TOKEN`).
+`OPENAI_RAG_MODEL`, `TAG_MODEL`, `PARSE_MODEL`, `RAG_MODEL`, `PLANNING_MODEL`, `HF_TOKEN`,
+`CRON_SECRET`, `AUTO_SYNC_INTERVAL_MINUTES`, `SYNC_INGEST_NEW_NOTES`, and in production
+`CORS_ORIGINS=https://<your-app>.vercel.app`).
 Add your `service-account.json` to `backend/`.
 
 ### 2. Start locally
@@ -21,14 +23,22 @@ Add your `service-account.json` to `backend/`.
 docker-compose up
 ```
 
-### 3. First-time ingestion
-Log in to `/admin`, pick notes with the Drive picker to ingest them, then use **Sync** to
-re-ingest any notes edited since their last sync (`POST /api/admin/sync`).
+### 3. Ingestion and sync
+Name note docs `Notes_<Module>` in the Drive folder. **Sync** (admin panel, `POST /api/admin/sync`)
+re-ingests notes edited since their last sync and adds new `Notes_` docs; other files go through
+the admin Drive picker.
+
+Automatic sync — pick one:
+- **Vercel Cron** (frontend on Vercel): set `CRON_SECRET` to the same value in the Vercel project
+  and in `backend/.env`. `frontend/vercel.json` calls `/api/cron/sync` daily, which forwards to the
+  backend's `POST /api/admin/sync/cron`.
+- **In-process** (long-lived backend host): set `AUTO_SYNC_INTERVAL_MINUTES=360` (0 = off).
+- **Any other scheduler**: `POST <backend>/api/admin/sync/cron` with `Authorization: Bearer $CRON_SECRET`.
 
 ### 4. Test RAG
 POST /api/onboard  { "role": "recruiter", "industry": "Tech" }
 POST /api/query    { "question": "What databases do you know?", "session_id": "..." }
 
 ### 5. Deploy
-Frontend → Vercel (connect GitHub repo, set NEXT_PUBLIC_API_URL)
+Frontend → Vercel (root directory `frontend`, set NEXT_PUBLIC_API_URL and CRON_SECRET)
 Backend  → Railway (connect GitHub repo, add env vars)

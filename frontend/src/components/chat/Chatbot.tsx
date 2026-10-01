@@ -1,9 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { onboard, sendQuery, sendFeedback } from "@/lib/api";
+import { API_BASE as API, onboard, sendQuery, sendFeedback } from "@/lib/api";
 import { Message, VisitorRole, Industry } from "@/types";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 interface DocInfo { name: string; summary: string; skills: string[]; course: string; }
 

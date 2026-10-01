@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import DrivePicker from "@/components/admin/DrivePicker";
 import ProfileEditor from "@/components/admin/ProfileEditor";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { API_BASE as API } from "@/lib/api";
 
 interface Stats {
   total_queries: number;
@@ -74,14 +74,23 @@ export default function AdminPage() {
     setSyncLog("");
     try {
       const res = await fetch(`${API}/admin/sync`, { method: "POST", credentials: "include" });
+      if (res.status === 409) throw new Error("another sync or ingestion batch is already running.");
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
+      const added: string[] = data.added ?? [];
+      const failed: string[] = data.failed ?? [];
       const lines: string[] = [];
       lines.push(
-        data.ingested.length === 0
+        data.ingested.length === 0 && added.length === 0
           ? `Everything up to date. ${data.skipped} docs unchanged.`
           : `Synced ${data.ingested.length} changed doc(s):\n${data.ingested.join("\n")}\n\n${data.skipped} unchanged (skipped).`
       );
+      if (added.length > 0) {
+        lines.push(`\n✚ Added ${added.length} new Notes_ doc(s):\n${added.join("\n")}`);
+      }
+      if (failed.length > 0) {
+        lines.push(`\n✖ ${failed.length} failed (see backend logs):\n${failed.join("\n")}`);
+      }
       if (data.new_files && data.new_files.length > 0) {
         lines.push(`\nℹ ${data.new_files.length} new file(s) on Drive not yet ingested — use the picker below to add them:\n${data.new_files.join("\n")}`);
       }
@@ -217,8 +226,8 @@ export default function AdminPage() {
             <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Sync existing docs</p>
             <p style={{ fontSize: 13, color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.7 }}>
               Compares Drive's <code style={{ background: "var(--bg-tertiary)", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>modifiedTime</code> against
-              the last sync and re-ingests <strong>already-ingested</strong> docs that changed — run after a study session.
-              New files are only reported here; add them via the picker below.
+              the last sync, re-ingests docs that changed, and adds any new <strong>Notes_</strong> docs. It also runs
+              on a schedule when auto-sync is configured. Other files go through the picker below.
             </p>
             <button
               onClick={handleSyncChanged}

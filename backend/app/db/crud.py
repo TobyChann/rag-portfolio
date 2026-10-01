@@ -21,13 +21,6 @@ async def create_visitor(db: AsyncSession, session_id: str, role: str,
     return visitor
 
 
-async def get_visitor_by_session(db: AsyncSession, session_id: str):
-    result = await db.execute(
-        select(Visitor).where(Visitor.session_id == session_id)
-    )
-    return result.scalar_one_or_none()
-
-
 # --- Query ---
 
 async def log_query(db: AsyncSession, session_id: str, question: str,

@@ -1,12 +1,12 @@
 # backend/app/api/admin.py
-import os
 import uuid
 import asyncio
 import hashlib
+import hmac
 import secrets
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -22,7 +22,10 @@ from app.sync.ingestion import (
     resolve_skills,
     generate_course_summary,
     sync_changed_documents,
+    ingest_lock,
+    SyncBusy,
 )
+from app.sync.google_client import GOOGLE_DOC_MIME
 from app.config import get_settings
 
 router = APIRouter()
@@ -34,6 +37,11 @@ ADMIN_COOKIE = "admin_session"
 
 def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+def _password_ok(password: str) -> bool:
+    expected = settings.admin_password_hash
+    return bool(expected) and hmac.compare_digest(_hash_password(password), expected)
 
 
 async def require_admin(request: Request):
@@ -60,8 +68,7 @@ class ChangePasswordRequest(BaseModel):
 
 @router.post("/login")
 async def login(req: LoginRequest, response: Response):
-    expected = os.getenv("ADMIN_PASSWORD_HASH", "")
-    if not expected or _hash_password(req.password) != expected:
+    if not _password_ok(req.password):
         raise HTTPException(status_code=401, detail="Invalid password")
 
     token = secrets.token_hex(32)
@@ -96,8 +103,7 @@ async def me(token: str = Depends(require_admin)):
 
 @router.post("/change-password")
 async def change_password(req: ChangePasswordRequest, token: str = Depends(require_admin)):
-    expected = os.getenv("ADMIN_PASSWORD_HASH", "")
-    if _hash_password(req.current_password) != expected:
+    if not _password_ok(req.current_password):
         raise HTTPException(status_code=401, detail="Current password incorrect")
     new_hash = _hash_password(req.new_password)
     print(f"[admin] New password hash: {new_hash}")
@@ -393,7 +399,6 @@ async def course_summary_draft(course_id: str, db: AsyncSession = Depends(get_db
 
 # ── Ingestion (backend batch job — survives tab close) ───
 
-GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 INGEST_PACING_SECONDS = 8   # keeps parse+tag traffic under Gemini free-tier RPM
 
 _batch_job: dict | None = None   # single job at a time; in-memory by design —
@@ -420,7 +425,8 @@ async def _run_batch(docs: List[BatchDoc]):
         # Isolate each doc: one failure (bad export, parse crash, etc.) must not
         # abort the rest of the batch. Record it and move on.
         try:
-            r = await ingest_document(d.id, d.name)
+            async with ingest_lock:   # waits out any sync in progress
+                r = await ingest_document(d.id, d.name)
             _batch_job["results"].append({
                 "title": r["title"], "chunks": r["chunk_count"],
                 "ms": r["elapsed_ms"], "parse_status": r["parse_status"],
@@ -469,9 +475,35 @@ async def ingest_cancel():
 
 @router.post("/sync", dependencies=[Depends(require_admin)])
 async def sync_changed():
-    """Update-only delta sync: re-ingests modified docs, reports (but does not
-    ingest) new files — insertion happens through the picker."""
-    return await sync_changed_documents()
+    """Delta sync: re-ingests modified docs and adds new Notes_* docs."""
+    try:
+        return await sync_changed_documents()
+    except SyncBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/sync/cron")
+async def sync_cron(authorization: str = Header(default="")):
+    """Scheduler entry point (Vercel Cron, GitHub Actions, any cron service).
+    Authenticated by CRON_SECRET as a bearer token rather than the admin
+    cookie. Starts the sync in the background and returns immediately, since a
+    sync can outlast a scheduler's HTTP timeout."""
+    secret = settings.cron_secret
+    if not secret or not hmac.compare_digest(authorization, f"Bearer {secret}"):
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+    if ingest_lock.locked():
+        return {"started": False, "reason": "ingestion already running"}
+    asyncio.create_task(_cron_sync())
+    return {"started": True}
+
+
+async def _cron_sync():
+    try:
+        await sync_changed_documents()
+    except SyncBusy:
+        pass
+    except Exception as e:
+        print(f"[sync] cron sync failed: {e}")
 
 
 @router.get("/drive-files", dependencies=[Depends(require_admin)])

@@ -3,11 +3,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.pipeline import run_rag_query, RAG_MODEL
-from app.llm_errors import is_transient_llm_error
+from app.llm import is_transient_llm_error
 from app.db.database import get_db
 from app.db.crud import log_query, update_feedback, create_visitor
 from app.cache.rate_limiter import check_rate_limit
 from app.cache.query_cache import set_session, get_session
+from app.api.admin import require_admin
+from app.config import get_settings
 import uuid
 
 router = APIRouter()
@@ -133,9 +135,10 @@ async def feedback(
     return {"ok": True}
 
 
-@router.get("/debug/health")
+@router.get("/debug/health", dependencies=[Depends(require_admin)])
 async def debug_health():
-    """Check all connections. Useful for diagnosing 500s."""
+    """Check all connections. Useful for diagnosing 500s. Admin-only: the
+    failure messages can leak connection details."""
     results = {}
 
     # Redis
@@ -157,7 +160,6 @@ async def debug_health():
         results["zilliz"] = f"FAIL: {e}"
 
     # LLM keys present, and which model is answering
-    from app.config import get_settings
     s = get_settings()
     results["openai_key"] = "set" if s.openai_api_key else "MISSING"
     results["gemini_key"] = "set" if s.gemini_api_key else "MISSING"

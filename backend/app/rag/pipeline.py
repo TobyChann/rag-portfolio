@@ -6,11 +6,9 @@ from app.rag.embedder import embed_query
 from app.rag.retriever import retrieve
 from app.cache.query_cache import get_cached_answer, set_cached_answer
 from app.config import get_settings
-from app.llm_errors import is_transient_llm_error
+from app.llm import gemini_client, is_transient_llm_error
 
 settings = get_settings()
-
-GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Visitor answers run on OpenAI when a funded key is configured — it avoids the
 # free-tier 503 "high demand" errors Gemini throws at unpaid traffic. Flip
@@ -21,7 +19,7 @@ if _use_openai:
     RAG_MODEL = settings.openai_rag_model
     _EXTRA_PARAMS: dict = {}   # OpenAI chat models reject reasoning_effort
 else:
-    client = AsyncOpenAI(api_key=settings.gemini_api_key, base_url=GEMINI_BASE)
+    client = gemini_client()
     RAG_MODEL = settings.rag_model
     _EXTRA_PARAMS = {"reasoning_effort": "none"}   # Gemini: keep thinking off
 

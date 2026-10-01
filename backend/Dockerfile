@@ -8,7 +8,9 @@ RUN apt-get update && apt-get install -y \
 
 ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# CPU-only torch first, so sentence-transformers doesn't pull the CUDA build.
+RUN pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 8000

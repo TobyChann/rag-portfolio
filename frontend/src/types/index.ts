@@ -15,19 +15,3 @@ export interface Message {
   responseMs?: number;
   sources?: Source[];
 }
-
-export interface Course {
-  id: string;
-  name: string;
-  institution: string;
-  year: number;
-  summary: string;
-  topics: string[];
-}
-
-export interface Experience {
-  title: string;
-  company: string;
-  period: string;
-  description: string;
-}

@@ -5,7 +5,7 @@ import PipelineDiagram, { DEFAULT_STAGES, type Stage } from "@/components/portfo
 import ModulesSection from "@/components/portfolio/ModulesSection";
 import SkillsBoard from "@/components/admin/SkillsBoard";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { API_BASE as API } from "@/lib/api";
 
 // ─── Content (hardcoded — home_content is gone; edit here) ───  // EDIT ME
 const PROFILE = {
@@ -17,10 +17,10 @@ const PROFILE = {
 const EDUCATION = {
   school: "Singapore Management University",
   degree: "BSc (Information Systems)",
-  double: "Second major in Accountancy",
+  double: "Bachelor of Accountancy (double degree)",
   period: "Aug 2023 – Nov 2027",
-  gpa: "",                          // e.g. "3.70 / 4.00" — empty hides the badge
-  awards: [] as string[],           // e.g. ["Dean's List AY24/25"]
+  gpa: "3.93 / 4.30",               // empty hides the badge
+  awards: ["Dean's List AY23/24", "Dean's List AY24/25", "Dean's List AY25/26"],
 };
 // ─────────────────────────────────────────────────────────────
 

@@ -1,0 +1,5 @@
+# Secrets come from env_file / the host, never baked into the image.
+.env
+*service-account*.json
+__pycache__/
+*.pyc
