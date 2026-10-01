@@ -19,9 +19,9 @@ const CATEGORIES: { id: string; label: string }[] = [
   { id: "transform",  label: "Transform — Processing" },
   { id: "frontend",   label: "Frontend — Visualise" },
   { id: "insights",   label: "Insights — Analytics" },
-  { id: "top_bar",    label: "Project Management" },
+  { id: "top_bar",    label: "Delivery & Project Management" },
   { id: "db_layer",   label: "Database Layer" },
-  { id: "bottom_bar", label: "Infrastructure" },
+  { id: "bottom_bar", label: "Infrastructure & Backend" },
 ];
 
 export default function SkillsBoard() {

@@ -25,6 +25,10 @@ services:
       - "3000:3000"
     env_file:
       - ./frontend/.env.local
+    environment:
+      # Windows bind mounts don't deliver file-change events into the
+      # container; poll so `next dev` actually sees edits.
+      - WATCHPACK_POLLING=true
     volumes:
       - ./frontend:/app
       - /app/node_modules

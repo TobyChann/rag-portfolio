@@ -18,9 +18,9 @@ export interface PipelineBar {
 
 // Bars and stages ship with NO placeholder skills — everything shown is
 // curated from the live Skill inventory. Empty category = empty on the diagram.
-const DEFAULT_TOP_BAR: PipelineBar = { label: "Project Management", items: [] };
+const DEFAULT_TOP_BAR: PipelineBar = { label: "Delivery & Project Management", items: [] };
 const DEFAULT_DB_LAYER: PipelineBar = { label: "Database Layer", items: [] };
-const DEFAULT_BOTTOM_BAR: PipelineBar = { label: "Infrastructure Design", items: [] };
+const DEFAULT_BOTTOM_BAR: PipelineBar = { label: "Infrastructure & Backend", items: [] };
 
 const STAGES: Stage[] = [
   { id: "extract",   label: "Extract",   sublabel: "Collection", icon: "⬇", color: "#FEF3C7", borderColor: "#D4A017", skills: [] },

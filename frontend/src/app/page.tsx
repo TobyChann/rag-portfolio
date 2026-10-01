@@ -16,11 +16,12 @@ const PROFILE = {
 
 const EDUCATION = {
   school: "Singapore Management University",
-  degree: "BSc (Information Systems)",
+  degree: "BSc (Information Systems, Business Analytics)",
   double: "Bachelor of Accountancy (double degree)",
   period: "Aug 2023 – Nov 2027",
   gpa: "3.93 / 4.30",               // empty hides the badge
-  awards: ["Dean's List AY23/24", "Dean's List AY24/25", "Dean's List AY25/26"],
+  awards: ["Dean's List AY23/24", "Dean's List AY24/25", "Dean's List AY25/26",
+           "SCIS Achievements Scholarship", "Teaching Assistant, IS430 Digital Payments and Innovation"],
 };
 // ─────────────────────────────────────────────────────────────
 
@@ -37,9 +38,9 @@ export default function HomePage() {
     DEFAULT_STAGES.map(s => ({ ...s, skills: [] }))
   );
   const [pipelineBars, setPipelineBars] = useState<Record<string, PipelineBar>>({
-    top_bar:    { label: "Project Management", items: [] },
+    top_bar:    { label: "Delivery & Project Management", items: [] },
     db_layer:   { label: "Database Layer", items: [] },
-    bottom_bar: { label: "Infrastructure Design", items: [] },
+    bottom_bar: { label: "Infrastructure & Backend", items: [] },
   });
 
   // Check admin
