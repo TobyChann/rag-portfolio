@@ -3,12 +3,12 @@
 docs) and the skills diagram data. The old /courses CRUD, /courses/documents,
 and /courses/generate-description are gone — modules are now Documents grouped
 by an optional Course folder, edited from the homepage in edit mode."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
-from app.db.models import Course, Document, Skill
+from app.db.models import Course, Document, Skill, Resume
 from app.sync.google_client import NOTES_PREFIX
 
 router = APIRouter()
@@ -83,3 +83,23 @@ async def get_public_skills(db: AsyncSession = Depends(get_db)):
     for s in result.scalars().all():
         grouped.setdefault(s.category, []).append(s.name)
     return grouped
+
+@router.get("/resume/meta")
+async def resume_meta(db: AsyncSession = Depends(get_db)):
+    """Whether a resume is available, for the home page's download button."""
+    r = (await db.execute(select(Resume.filename, Resume.uploaded_at))).first()
+    if not r:
+        return {"exists": False}
+    return {"exists": True, "filename": r.filename,
+            "uploaded_at": r.uploaded_at.isoformat() if r.uploaded_at else None}
+
+
+@router.get("/resume")
+async def download_resume(db: AsyncSession = Depends(get_db)):
+    r = (await db.execute(select(Resume))).scalars().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="No resume uploaded")
+    return Response(content=r.data, media_type=r.content_type, headers={
+        "Content-Disposition": f'attachment; filename="{r.filename}"',
+        "Cache-Control": "no-cache",
+    })

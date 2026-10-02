@@ -25,6 +25,16 @@ async def set_cached_answer(question: str, answer: str, chunks: list):
     await r.setex(key, CACHE_TTL, payload)
 
 
+async def clear_answer_cache() -> int:
+    """Drop every cached answer — call when the knowledge base changes in a way
+    that makes old answers stale (e.g. a new resume)."""
+    r = await get_redis()
+    keys = [k async for k in r.scan_iter("qa:*")]
+    if keys:
+        await r.delete(*keys)
+    return len(keys)
+
+
 async def set_session(session_id: str, data: dict, ttl: int = 86400):
     r = await get_redis()
     await r.setex(f"session:{session_id}", ttl, json.dumps(data))

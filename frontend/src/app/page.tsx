@@ -43,6 +43,14 @@ export default function HomePage() {
     bottom_bar: { label: "Infrastructure & Backend", items: [] },
   });
 
+  const [hasResume, setHasResume] = useState(false);
+  useEffect(() => {
+    fetch(`${API}/resume/meta`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setHasResume(!!d?.exists))
+      .catch(() => {});
+  }, []);
+
   // Check admin
   useEffect(() => {
     fetch(`${API}/admin/me`, { credentials: "include" })
@@ -111,6 +119,15 @@ export default function HomePage() {
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 4 }}>{PROFILE.name}</h1>
         <p style={{ fontSize: 16, color: "var(--fg-muted)", marginBottom: 12 }}>{PROFILE.tagline}</p>
         <p style={{ fontSize: 14, color: "var(--fg-muted)", lineHeight: 1.8 }}>{PROFILE.bio}</p>
+        {hasResume && (
+          <a href={`${API}/resume`} className="btn btn-secondary"
+             style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 16, fontSize: 13, textDecoration: "none" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+            </svg>
+            Download resume
+          </a>
+        )}
       </section>
 
       {/* ── Skills pipeline ──────────────────────── */}

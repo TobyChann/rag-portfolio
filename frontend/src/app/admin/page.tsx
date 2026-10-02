@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import DrivePicker from "@/components/admin/DrivePicker";
 import ProfileEditor from "@/components/admin/ProfileEditor";
+import ResumeManager from "@/components/admin/ResumeManager";
 
 import { API_BASE as API } from "@/lib/api";
 
@@ -24,7 +25,7 @@ interface Stats {
 
 // Skills board and doc review now live on the homepage in Curate mode —
 // edit the content where you see it.
-const TABS = ["dashboard", "ingest", "profile", "settings"] as const;
+const TABS = ["dashboard", "ingest", "resume", "profile", "settings"] as const;
 type Tab = typeof TABS[number];
 
 export default function AdminPage() {
@@ -254,6 +255,13 @@ export default function AdminPage() {
               It also shows each file's last-synced date + status so a half-finished
               ingest is easy to reconcile. */}
           <DrivePicker />
+        </div>
+      )}
+
+      {/* Resume tab */}
+      {tab === "resume" && (
+        <div className="fade-in">
+          <ResumeManager />
         </div>
       )}
 

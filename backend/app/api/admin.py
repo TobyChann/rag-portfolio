@@ -6,14 +6,16 @@ import hmac
 import secrets
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.db.database import get_db
 from app.db.crud import get_stats
-from app.db.models import Course, Skill, ProfileNote, Document
+from app.db.models import Course, Skill, ProfileNote, Document, Resume
 from app.cache.redis_client import get_redis
+from app.cache.query_cache import clear_answer_cache
+from app.sync import resume as resume_mod
 from app.sync.ingestion import (
     ingest_document,
     list_all_files,
@@ -540,3 +542,60 @@ async def drive_files(db: AsyncSession = Depends(get_db)):
             "changed": changed,
         })
     return out
+
+# ── Resume (download file + chatbot knowledge) ───────────
+
+def _resume_meta(r: Resume | None) -> dict:
+    if not r:
+        return {"exists": False}
+    return {"exists": True, "filename": r.filename, "content_type": r.content_type,
+            "size": len(r.data), "text_chars": len(r.text or ""),
+            "uploaded_at": r.uploaded_at.isoformat() if r.uploaded_at else None}
+
+
+@router.get("/resume", dependencies=[Depends(require_admin)])
+async def resume_status(db: AsyncSession = Depends(get_db)):
+    r = (await db.execute(select(Resume))).scalars().first()
+    return _resume_meta(r)
+
+
+@router.post("/resume", dependencies=[Depends(require_admin)])
+async def upload_resume(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    """Upload or replace the resume: stores the file and its text (contact
+    details stripped) for the chatbot, and clears cached chatbot answers."""
+    ext = "." + (file.filename or "").rsplit(".", 1)[-1].lower()
+    content_type = resume_mod.ALLOWED_TYPES.get(ext)
+    if not content_type:
+        raise HTTPException(status_code=400, detail="Upload a .pdf or .docx file")
+    data = await file.read()
+    if len(data) > resume_mod.MAX_BYTES:
+        raise HTTPException(status_code=400, detail="File is larger than 5 MB")
+
+    try:
+        text = resume_mod.to_markdown(
+            await asyncio.to_thread(resume_mod.extract_text, data, content_type))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Couldn't read that file: {e}")
+    if len(text) < 200:
+        raise HTTPException(status_code=400, detail="Couldn't find enough text in that file "
+                                                    "(is it a scanned image?)")
+    for old in (await db.execute(select(Resume))).scalars().all():
+        await db.delete(old)
+    r = Resume(filename=file.filename, content_type=content_type, data=data,
+               text=text)
+    db.add(r)
+    await db.commit()
+    await db.refresh(r)
+    resume_mod.invalidate_resume_cache()
+    await clear_answer_cache()
+    return _resume_meta(r)
+
+
+@router.delete("/resume", dependencies=[Depends(require_admin)])
+async def delete_resume(db: AsyncSession = Depends(get_db)):
+    for old in (await db.execute(select(Resume))).scalars().all():
+        await db.delete(old)
+    await db.commit()
+    resume_mod.invalidate_resume_cache()
+    await clear_answer_cache()
+    return {"exists": False}

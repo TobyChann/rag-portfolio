@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, JSON, Boolean, ForeignKey, Table
+from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, JSON, Boolean, ForeignKey, Table, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -132,3 +132,16 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)       # user | assistant
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Resume(Base):
+    """The owner's current resume: the original file (served for download) and
+    its extracted text (given to the chatbot whole). At most one row — uploading
+    a new version replaces it."""
+    __tablename__ = "resumes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
+    data = Column(LargeBinary, nullable=False)
+    text = Column(Text, nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -21,6 +21,7 @@ from app.rag.embedder import embed_query
 from app.rag.retriever import retrieve
 from app.config import get_settings
 from app.llm import gemini_client
+from app.sync.resume import get_resume_text
 
 settings = get_settings()
 
@@ -71,7 +72,10 @@ async def _profile_block(db: AsyncSession) -> str:
         f"- {s.name}" + (f" ({s.category})" if s.category else "")
         for s in categorised + uncategorised
     ) or "(empty)"
-    return f"OWNER PROFILE:\n{profile}\n\nSKILL INVENTORY (skills the owner has):\n{skills_txt}"
+    resume = await get_resume_text()
+    resume_txt = f"\n\nRESUME:\n{resume}" if resume else ""
+    return (f"OWNER PROFILE:\n{profile}\n\nSKILL INVENTORY (skills the owner has):\n{skills_txt}"
+            f"{resume_txt}")
 
 
 async def _notes_block(question: str) -> str:

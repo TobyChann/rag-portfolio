@@ -4,6 +4,7 @@ import time
 from openai import AsyncOpenAI
 from app.rag.embedder import embed_query
 from app.rag.retriever import retrieve
+from app.sync.resume import get_resume_text
 from app.cache.query_cache import get_cached_answer, set_cached_answer
 from app.config import get_settings
 from app.llm import gemini_client, is_transient_llm_error
@@ -59,8 +60,12 @@ Use only the provided context (Toby's study notes and resume). If the context do
 cover the question, say so plainly rather than guessing.
 
 Voice:
-- Refer to him by name, "Toby" (e.g. "Toby studied...", "Toby's internship at...").
-  Never say "the candidate" or "they".
+- Refer to Toby by name ("Toby studied...", "Toby's internship at...").
+  Never use pronouns for Toby (no he/she/they/his/her/their) and never "the candidate";
+  repeat the name or restructure the sentence instead.
+- Context marked "Resume" is Toby's own resume (always included): use it for work
+  experience, projects and skills, and the study notes for what was learned in each
+  module. Ignore whichever part doesn't bear on the question.
 
 Format (Markdown, rendered in a small chat window — keep it skimmable):
 - Open with one short sentence that answers the question directly.
@@ -80,10 +85,11 @@ def _chunk_meta(chunks: list[dict]) -> list[dict]:
              "score": c["score"]} for c in chunks]
 
 
-def _llm_messages(question: str, chunks: list[dict]) -> list[dict]:
-    context = "\n\n---\n\n".join(
-        f"[From: {c['doc_title']} — {c['heading']}]\n{c['text']}" for c in chunks
-    )
+def _llm_messages(question: str, chunks: list[dict], resume: str = "") -> list[dict]:
+    blocks = [f"[From: {c['doc_title']} — {c['heading']}]\n{c['text']}" for c in chunks]
+    if resume:
+        blocks.insert(0, f"[From: Resume]\n{resume}")
+    context = "\n\n---\n\n".join(blocks)
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
@@ -113,7 +119,8 @@ async def stream_rag_query(question: str):
         return
 
     chunks = await retrieve(await embed_query(question))
-    if not chunks:
+    resume = await get_resume_text()
+    if not chunks and not resume:
         yield {"type": "sources", "sources": []}
         yield {"type": "delta", "text": NO_CONTEXT_ANSWER}
         yield {"type": "done", "answer": NO_CONTEXT_ANSWER, "chunks": [], "cache_hit": None,
@@ -125,7 +132,8 @@ async def stream_rag_query(question: str):
 
     # Retries only cover opening the stream (where 503s/429s surface); once
     # tokens are flowing a failure ends the answer.
-    stream = await _complete_with_retry(model=RAG_MODEL, messages=_llm_messages(question, chunks),
+    stream = await _complete_with_retry(model=RAG_MODEL,
+                                        messages=_llm_messages(question, chunks, resume),
                                         stream=True, **_GEN_PARAMS)
     parts = []
     async for event in stream:
