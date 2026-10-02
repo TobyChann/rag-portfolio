@@ -172,8 +172,10 @@ const NOTE_GRID: React.CSSProperties = {
   gap: 10,
 };
 
+// Uses the `border` shorthand like the base styles it overrides; mixing in
+// borderColor makes React warn when the highlight is removed.
 const dropHighlight = (over: boolean): React.CSSProperties =>
-  over ? { borderColor: "var(--accent)", background: "var(--accent-light)" } : {};
+  over ? { border: "1px solid var(--accent)", background: "var(--accent-light)" } : {};
 
 function fmtSynced(iso: string | null): { text: string; stale: boolean } {
   if (!iso) return { text: "Never synced", stale: true };
