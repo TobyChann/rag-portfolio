@@ -176,3 +176,9 @@ body {
 .md table { border-collapse: collapse; margin: 0 0 10px; font-size: 12px; }
 .md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .md a { color: var(--accent-text); text-decoration: underline; }
+
+/* Compact variant for the visitor chat widget */
+.md-sm h1, .md-sm h2, .md-sm h3, .md-sm h4 { font-size: 12.5px; margin: 10px 0 4px; }
+.md-sm p { margin: 0 0 6px; }
+.md-sm ul, .md-sm ol { margin: 0 0 6px; padding-left: 16px; }
+.md-sm li { margin: 2px 0; }

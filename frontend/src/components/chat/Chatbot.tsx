@@ -1,6 +1,8 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { API_BASE as API, onboard, sendQuery, sendFeedback } from "@/lib/api";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { API_BASE as API, onboard, streamQuery, sendFeedback } from "@/lib/api";
 import { Message, VisitorRole, Industry } from "@/types";
 
 interface DocInfo { name: string; summary: string; skills: string[]; course: string; }
@@ -9,10 +11,11 @@ let _id = 0;
 const uid = () => String(++_id);
 
 const SUGGESTED = [
-    "What databases have you worked with?",
-    "Tell me about your ML experience",
-    "What programming languages do you know?",
-    "Describe your final year project",
+    "What has Toby studied in Accounting?",
+    "What has Toby studied in Finance?",
+    "What has Toby studied in Information Systems?",
+    "What has Toby built?",
+    "What work experience does Toby have?",
 ];
 
 const ROLES: { value: VisitorRole; label: string }[] = [
@@ -40,7 +43,7 @@ const S = {
     },
     panel: {
         position: "fixed" as const, bottom: 24, right: 24,
-        width: 320, background: "var(--bg)",
+        width: 360, maxWidth: "calc(100vw - 32px)", background: "var(--bg)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-lg)",
         boxShadow: "0 8px 32px rgba(0,0,0,.10)",
@@ -55,8 +58,7 @@ const S = {
     msgBot: {
         background: "var(--bg-secondary)", color: "var(--fg)",
         fontSize: 12, padding: "8px 11px", borderRadius: "var(--radius-md)",
-        maxWidth: "90%", lineHeight: 1.6, alignSelf: "flex-start",
-        whiteSpace: "pre-wrap" as const,   // render "- " bullet lines on their own line
+        maxWidth: "92%", lineHeight: 1.6, alignSelf: "flex-start",
     },
     msgUser: {
         background: "var(--accent)", color: "#fff",
@@ -124,7 +126,7 @@ export default function Chatbot() {
             const { session_id } = await onboard(role, industry, ref);
             setSessionId(session_id);
             localStorage.setItem("portfolio_session", session_id);
-            setMessages([{ id: uid(), role: "assistant", content: "Hi! Ask me anything about the candidate's skills, coursework, or projects." }]);
+            setMessages([{ id: uid(), role: "assistant", content: "Hi! Ask me anything about Toby's coursework, projects or experience." }]);
         } catch { setError("Something went wrong. Please try again."); }
     }
 
@@ -134,9 +136,19 @@ export default function Chatbot() {
         setInput(""); setError("");
         setMessages(p => [...p, { id: uid(), role: "user", content: q }]);
         setLoading(true);
+        // The answer streams into this message; it's added on the first event.
+        const id = uid();
+        const patch = (fn: (m: Message) => Message) =>
+            setMessages(p => p.some(m => m.id === id)
+                ? p.map(m => m.id === id ? fn(m) : m)
+                : [...p, fn({ id, role: "assistant", content: "", feedback: null, sources: [] })]);
         try {
-            const res = await sendQuery(q, sessionId);
-            setMessages(p => [...p, { id: uid(), role: "assistant", content: res.answer, queryId: res.query_id, feedback: null, sources: res.sources || [] }]);
+            await streamQuery(q, sessionId, ev => {
+                if (ev.type === "sources") patch(m => ({ ...m, sources: ev.sources }));
+                else if (ev.type === "delta") { setLoading(false); patch(m => ({ ...m, content: m.content + ev.text })); }
+                else if (ev.type === "done") patch(m => ({ ...m, queryId: ev.query_id ?? undefined }));
+                else if (ev.type === "error") setError(ev.detail);
+            });
         } catch (e: any) {
             if (e.message?.includes("Session expired")) {
                 // Redis lost the session (e.g. container restart) — drop back to onboarding
@@ -234,7 +246,13 @@ export default function Chatbot() {
                             <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8, minHeight: 0 }}>
                                 {messages.map(msg => (
                                     <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
-                                        <div style={msg.role === "user" ? S.msgUser : S.msgBot}>{msg.content}</div>
+                                        {msg.role === "user"
+                                            ? <div style={S.msgUser}>{msg.content}</div>
+                                            : msg.content && (
+                                                <div style={S.msgBot} className="md md-sm">
+                                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                                                </div>
+                                            )}
 
                                         {/* Linked notes behind the answer — click to peek at the summary */}
                                         {msg.role === "assistant" && (() => {
@@ -242,7 +260,7 @@ export default function Chatbot() {
                                             if (known.length === 0) return null;
                                             return (
                                                 <div style={{ maxWidth: "90%", marginTop: 5 }}>
-                                                    <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>From your notes</p>
+                                                    <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>From Toby&apos;s notes</p>
                                                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                                                         {known.map(s => {
                                                             const key = `${msg.id}:${s.google_doc_id}`;

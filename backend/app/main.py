@@ -10,6 +10,9 @@ from app.config import get_settings
 from app.db.database import init_db
 from app.api import query, admin, health, courses, planning
 from app.sync.ingestion import auto_sync_loop
+from app.rag.embedder import embed_query
+from app.rag.retriever import get_client as get_milvus_client
+from app.cache.redis_client import get_redis
 
 settings = get_settings()
 
@@ -25,6 +28,26 @@ class _HealthFilter(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
+async def _warm_up():
+    """Load the embedding model, open the Zilliz connection (and load the
+    collection), and touch Redis. Each step is independent and non-fatal."""
+    steps = {
+        "embedding model": lambda: embed_query("warm up"),
+        "zilliz": lambda: asyncio.to_thread(get_milvus_client),
+        "redis": lambda: _redis_ping(),
+    }
+    for name, step in steps.items():
+        try:
+            await step()
+            print(f"[startup] warmed {name}")
+        except Exception as e:
+            print(f"[startup] warm-up of {name} failed (will retry on first use): {e}")
+
+
+async def _redis_ping():
+    await (await get_redis()).ping()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -32,6 +55,10 @@ async def lifespan(app: FastAPI):
         print("[startup] Database tables ready")
     except Exception as e:
         print(f"[startup] DB init failed: {e} — continuing anyway")
+
+    # Warm the slow first-touch dependencies in the background so the first
+    # visitor's question doesn't pay for them; the server is up meanwhile.
+    asyncio.create_task(_warm_up())
 
     sync_task = None
     if settings.auto_sync_interval_minutes > 0:

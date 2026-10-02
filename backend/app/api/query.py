@@ -1,10 +1,13 @@
+import json
+
 from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.rag.pipeline import run_rag_query, RAG_MODEL
+from app.rag.pipeline import run_rag_query, stream_rag_query, RAG_MODEL
 from app.llm import is_transient_llm_error
-from app.db.database import get_db
+from app.db.database import get_db, AsyncSessionLocal
 from app.db.crud import log_query, update_feedback, create_visitor
 from app.cache.rate_limiter import check_rate_limit
 from app.cache.query_cache import set_session, get_session
@@ -62,19 +65,7 @@ async def query(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(check_rate_limit),
 ):
-    # Validate query length
-    if not req.question or not req.question.strip():
-        raise HTTPException(status_code=400, detail="Question cannot be empty")
-    if len(req.question) > 500:
-        raise HTTPException(status_code=400, detail="Question too long (max 500 chars)")
-
-    # Validate session
-    session = await get_session(req.session_id)
-    if not session:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired session. Please reopen the chat."
-        )
+    await _validate(req)
 
     try:
         result = await run_rag_query(req.question)
@@ -115,6 +106,62 @@ async def query(
         "response_ms": result["response_ms"],
         "sources": result.get("sources", []),
     }
+
+
+async def _validate(req: QueryRequest):
+    if not req.question or not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+    if len(req.question) > 500:
+        raise HTTPException(status_code=400, detail="Question too long (max 500 chars)")
+    if not await get_session(req.session_id):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired session. Please reopen the chat."
+        )
+
+
+@router.post("/query/stream")
+async def query_stream(
+    req: QueryRequest,
+    _: None = Depends(check_rate_limit),
+):
+    """Streaming /query: newline-delimited JSON events (sources, text deltas,
+    then done with the query_id for feedback). Validation errors still return
+    normal HTTP status codes because they're raised before streaming starts."""
+    await _validate(req)
+
+    async def events():
+        try:
+            async for ev in stream_rag_query(req.question):
+                if ev["type"] != "done":
+                    yield json.dumps(ev) + "\n"
+                    continue
+                query_id = None
+                # Own session: the request-scoped one may already be closed by the
+                # time a long stream finishes.
+                try:
+                    async with AsyncSessionLocal() as db:
+                        logged = await log_query(
+                            db, session_id=req.session_id, question=req.question,
+                            answer=ev["answer"], chunks_used=ev["chunks"],
+                            response_ms=ev["response_ms"], cache_hit=ev["cache_hit"],
+                        )
+                        await db.commit()
+                        query_id = str(logged.id)
+                except Exception as e:
+                    print(f"[query] DB logging error (non-fatal): {e}")
+                yield json.dumps({"type": "done", "query_id": query_id,
+                                  "cache_hit": ev["cache_hit"],
+                                  "response_ms": ev["response_ms"]}) + "\n"
+        except Exception as e:
+            print(f"[query] RAG stream error: {e}")
+            detail = ("The model is briefly busy. Please try again in a moment."
+                      if is_transient_llm_error(e) else "Something went wrong answering that.")
+            yield json.dumps({"type": "error", "detail": detail}) + "\n"
+
+    # X-Accel-Buffering stops reverse proxies (nginx-style) from holding the stream.
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/meta")

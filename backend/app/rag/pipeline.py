@@ -54,92 +54,100 @@ def _sources_from_chunks(chunks: list[dict]) -> list[dict]:
         sources.append({"google_doc_id": doc_id, "title": c.get("doc_title", "")})
     return sources
 
-SYSTEM_PROMPT = """You are a helpful assistant representing a job candidate's portfolio.
-Answer questions about their skills, coursework, and experience using only the provided context.
-If the context doesn't contain relevant information, say so honestly rather than making things up.
-Always refer to the candidate in third person (e.g. "They studied...", "Their experience includes...").
+SYSTEM_PROMPT = """You answer visitors' questions about Toby, a student whose portfolio this is.
+Use only the provided context (Toby's study notes and resume). If the context doesn't
+cover the question, say so plainly rather than guessing.
 
-Style — keep it skimmable, not verbose:
-- Open with one short sentence answering the question directly (max ~20 words).
-- Then give the specifics as bullet points, one per line, each starting with "- ".
-- Keep each bullet to a single tight line. Aim for 2-5 bullets; fewer is fine.
-- Do NOT use other markdown (no **, *, #, tables). Plain text with "- " bullets only.
-- Don't repeat the question or pad with filler. If one sentence fully answers it, skip the bullets.
+Voice:
+- Refer to him by name, "Toby" (e.g. "Toby studied...", "Toby's internship at...").
+  Never say "the candidate" or "they".
+
+Format (Markdown, rendered in a small chat window — keep it skimmable):
+- Open with one short sentence that answers the question directly.
+- Then the specifics as a bulleted list ("- "), one tight line each, 2-6 bullets.
+  Bold the key term at the start of a bullet when it helps scanning (e.g. "- **SQL**: ...").
+- Use a short "### " heading only when the answer has two distinct groups.
+- No tables, no horizontal rules, no closing summary or filler.
 """
+
+NO_CONTEXT_ANSWER = "I couldn't find anything about that in Toby's notes or resume."
+
+
+def _chunk_meta(chunks: list[dict]) -> list[dict]:
+    """What gets cached and logged per answer. Keeps doc_id so cached answers
+    can still link their sources."""
+    return [{"doc_id": c["doc_id"], "doc_title": c["doc_title"], "heading": c["heading"],
+             "score": c["score"]} for c in chunks]
+
+
+def _llm_messages(question: str, chunks: list[dict]) -> list[dict]:
+    context = "\n\n---\n\n".join(
+        f"[From: {c['doc_title']} — {c['heading']}]\n{c['text']}" for c in chunks
+    )
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
+    ]
+
+
+# On Gemini, reasoning_effort="none" keeps thinking tokens from eating max_tokens
+# and truncating the answer; OpenAI models omit that param (see _EXTRA_PARAMS).
+_GEN_PARAMS = dict(max_tokens=1024, temperature=0.2, **_EXTRA_PARAMS)
+
+
+async def stream_rag_query(question: str):
+    """Async generator of answer events, so the UI can render while the model
+    writes:
+      {"type": "sources", "sources": [...]}   once, before any text
+      {"type": "delta", "text": "..."}        repeatedly
+      {"type": "done", "answer", "chunks", "cache_hit", "response_ms"}
+    Exceptions propagate; the caller turns them into an error event."""
+    start = time.time()
+
+    cached = await get_cached_answer(question)
+    if cached:
+        yield {"type": "sources", "sources": _sources_from_chunks(cached["chunks"])}
+        yield {"type": "delta", "text": cached["answer"]}
+        yield {"type": "done", "answer": cached["answer"], "chunks": cached["chunks"],
+               "cache_hit": "redis", "response_ms": 0}
+        return
+
+    chunks = await retrieve(await embed_query(question))
+    if not chunks:
+        yield {"type": "sources", "sources": []}
+        yield {"type": "delta", "text": NO_CONTEXT_ANSWER}
+        yield {"type": "done", "answer": NO_CONTEXT_ANSWER, "chunks": [], "cache_hit": None,
+               "response_ms": round((time.time() - start) * 1000)}
+        return
+
+    meta = _chunk_meta(chunks)
+    yield {"type": "sources", "sources": _sources_from_chunks(meta)}
+
+    # Retries only cover opening the stream (where 503s/429s surface); once
+    # tokens are flowing a failure ends the answer.
+    stream = await _complete_with_retry(model=RAG_MODEL, messages=_llm_messages(question, chunks),
+                                        stream=True, **_GEN_PARAMS)
+    parts = []
+    async for event in stream:
+        delta = event.choices[0].delta.content if event.choices else None
+        if delta:
+            parts.append(delta)
+            yield {"type": "delta", "text": delta}
+
+    answer = "".join(parts)
+    await set_cached_answer(question, answer, meta)
+    yield {"type": "done", "answer": answer, "chunks": meta, "cache_hit": None,
+           "response_ms": round((time.time() - start) * 1000)}
 
 
 async def run_rag_query(question: str) -> dict:
-    """
-    Full RAG pipeline:
-    1. Check Redis cache (exact match)
-    2. Embed question
-    3. Retrieve relevant chunks from Zilliz
-    4. Generate answer (thinking disabled — factual extraction, not reasoning)
-    5. Cache result
-    Returns {answer, chunks, response_ms, cache_hit}
-    """
-    start = time.time()
-
-    # 1. Check cache first
-    cached = await get_cached_answer(question)
-    if cached:
-        return {
-            "answer": cached["answer"],
-            "chunks": cached["chunks"],
-            "sources": _sources_from_chunks(cached["chunks"]),
-            "response_ms": 0,
-            "cache_hit": "redis",
-        }
-
-    # 2. Embed the question
-    query_vector = await embed_query(question)
-
-    # 3. Retrieve relevant chunks
-    chunks = await retrieve(query_vector)
-
-    if not chunks:
-        return {
-            "answer": "I couldn't find relevant information about that in the portfolio documents.",
-            "chunks": [],
-            "sources": [],
-            "response_ms": round((time.time() - start) * 1000),
-            "cache_hit": None,
-        }
-
-    # 4. Build context from chunks
-    context = "\n\n---\n\n".join(
-        f"[From: {c['doc_title']} — {c['heading']}]\n{c['text']}"
-        for c in chunks
-    )
-
-    # 5. Generate the answer. On Gemini, reasoning_effort="none" keeps thinking
-    # tokens from eating max_tokens and truncating the answer; OpenAI models omit
-    # that param (see _EXTRA_PARAMS). Retries ride out transient 503 spikes.
-    response = await _complete_with_retry(
-        model=RAG_MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
-        ],
-        max_tokens=1024,
-        temperature=0.2,  # Low temp = more factual, less creative
-        **_EXTRA_PARAMS,
-    )
-
-    answer = response.choices[0].message.content
-    elapsed = round((time.time() - start) * 1000)
-
-    # 6. Cache for next time. Keep doc_id so cached answers can still link sources.
-    chunk_meta = [
-        {"doc_id": c["doc_id"], "doc_title": c["doc_title"], "heading": c["heading"], "score": c["score"]}
-        for c in chunks
-    ]
-    await set_cached_answer(question, answer, chunk_meta)
-
-    return {
-        "answer": answer,
-        "chunks": chunk_meta,
-        "sources": _sources_from_chunks(chunk_meta),
-        "response_ms": elapsed,
-        "cache_hit": None,
-    }
+    """Non-streaming form: the same pipeline, collected into one result.
+    Returns {answer, chunks, sources, response_ms, cache_hit}."""
+    sources = []
+    async for event in stream_rag_query(question):
+        if event["type"] == "sources":
+            sources = event["sources"]
+        elif event["type"] == "done":
+            return {"answer": event["answer"], "chunks": event["chunks"], "sources": sources,
+                    "response_ms": event["response_ms"], "cache_hit": event["cache_hit"]}
+    raise RuntimeError("RAG stream ended without a result")
