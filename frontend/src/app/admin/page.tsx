@@ -77,7 +77,19 @@ export default function AdminPage() {
       const res = await fetch(`${API}/admin/sync`, { method: "POST", credentials: "include" });
       if (res.status === 409) throw new Error("another sync or ingestion batch is already running.");
       if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      // The sync runs in the background; poll until it finishes.
+      setSyncLog("Syncing… (changed docs can take a few minutes each)");
+      let job: any;
+      for (;;) {
+        await new Promise(r => setTimeout(r, 3000));
+        const s = await fetch(`${API}/admin/sync/status`, { credentials: "include" });
+        if (!s.ok) throw new Error("lost track of the sync — check the backend logs.");
+        job = await s.json();
+        if (job.status !== "running") break;
+      }
+      if (job.status === "error") throw new Error(job.error);
+      if (job.status !== "done") throw new Error("sync was interrupted.");
+      const data = job.result;
       const added: string[] = data.added ?? [];
       const failed: string[] = data.failed ?? [];
       const lines: string[] = [];

@@ -512,37 +512,59 @@ async def ingest_cancel():
     return {"ok": True}
 
 
+# Last sync run, polled by the admin page. In-memory like _batch_job: a restart
+# kills the run and its state together.
+_sync_job: dict = {"status": "idle"}
+
+
+async def _run_sync():
+    global _sync_job
+    _sync_job = {"status": "running", "started_at": datetime.utcnow().isoformat() + "Z"}
+    try:
+        result = await sync_changed_documents()
+        _sync_job = {**_sync_job, "status": "done", "result": result}
+    except SyncBusy:
+        _sync_job = {"status": "idle"}
+    except Exception as e:
+        print(f"[sync] sync failed: {e}")
+        _sync_job = {**_sync_job, "status": "error", "error": str(e)}
+
+
+def _start_sync() -> bool:
+    if ingest_lock.locked() or _sync_job.get("status") == "running":
+        return False
+    asyncio.create_task(_run_sync())
+    return True
+
+
 @router.post("/sync", dependencies=[Depends(require_admin)])
 async def sync_changed():
-    """Delta sync: re-ingests modified docs and adds new Notes_* docs."""
-    try:
-        return await sync_changed_documents()
-    except SyncBusy as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    """Start a delta sync (re-ingest modified docs, add new Notes_* docs) in
+    the background; poll GET /sync/status for the result. Runs detached because
+    a sync with changes can take minutes — longer than a proxied request should
+    be held open."""
+    if not _start_sync():
+        raise HTTPException(status_code=409, detail="Another sync or ingestion batch is running")
+    return {"started": True}
+
+
+@router.get("/sync/status", dependencies=[Depends(require_admin)])
+async def sync_status():
+    return _sync_job
 
 
 @router.post("/sync/cron")
 async def sync_cron(authorization: str = Header(default="")):
-    """Scheduler entry point (Vercel Cron, GitHub Actions, any cron service).
-    Authenticated by CRON_SECRET as a bearer token rather than the admin
-    cookie. Starts the sync in the background and returns immediately, since a
-    sync can outlast a scheduler's HTTP timeout."""
+    """Entry point for an external scheduler (GitHub Actions, any cron
+    service), authenticated by CRON_SECRET as a bearer token rather than the
+    admin cookie. Not needed when AUTO_SYNC_INTERVAL_MINUTES runs the sync
+    in-process."""
     secret = settings.cron_secret
     if not secret or not hmac.compare_digest(authorization, f"Bearer {secret}"):
         raise HTTPException(status_code=401, detail="Invalid cron secret")
-    if ingest_lock.locked():
+    if not _start_sync():
         return {"started": False, "reason": "ingestion already running"}
-    asyncio.create_task(_cron_sync())
     return {"started": True}
-
-
-async def _cron_sync():
-    try:
-        await sync_changed_documents()
-    except SyncBusy:
-        pass
-    except Exception as e:
-        print(f"[sync] cron sync failed: {e}")
 
 
 @router.get("/drive-files", dependencies=[Depends(require_admin)])

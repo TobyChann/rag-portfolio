@@ -1,0 +1,7 @@
+# HTTPS for the backend. Caddy gets and renews the certificate automatically.
+{$API_DOMAIN} {
+	reverse_proxy backend:8000 {
+		# Pass streamed chat answers through immediately instead of buffering.
+		flush_interval -1
+	}
+}

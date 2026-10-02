@@ -14,8 +14,7 @@ Create `backend/.env` with:
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ZILLIZ_URI`, `ZILLIZ_TOKEN`, `DATABASE_URL`, `REDIS_URL`,
 `GOOGLE_DRIVE_FOLDER_ID`, `ADMIN_PASSWORD_HASH` (optional: `RAG_PROVIDER=gemini` to answer on Gemini instead,
 `OPENAI_RAG_MODEL`, `TAG_MODEL`, `PARSE_MODEL`, `RAG_MODEL`, `PLANNING_MODEL`, `HF_TOKEN`,
-`CRON_SECRET`, `AUTO_SYNC_INTERVAL_MINUTES`, `SYNC_INGEST_NEW_NOTES`, and in production
-`CORS_ORIGINS=https://<your-app>.vercel.app`).
+`CRON_SECRET`, `AUTO_SYNC_INTERVAL_MINUTES`, `SYNC_INGEST_NEW_NOTES`).
 Add your `service-account.json` to `backend/`.
 
 ### 2. Start locally
@@ -28,17 +27,40 @@ Name note docs `Notes_<Module>` in the Drive folder. **Sync** (admin panel, `POS
 re-ingests notes edited since their last sync and adds new `Notes_` docs; other files go through
 the admin Drive picker.
 
-Automatic sync — pick one:
-- **Vercel Cron** (frontend on Vercel): set `CRON_SECRET` to the same value in the Vercel project
-  and in `backend/.env`. `frontend/vercel.json` calls `/api/cron/sync` daily, which forwards to the
-  backend's `POST /api/admin/sync/cron`.
-- **In-process** (long-lived backend host): set `AUTO_SYNC_INTERVAL_MINUTES=360` (0 = off).
-- **Any other scheduler**: `POST <backend>/api/admin/sync/cron` with `Authorization: Bearer $CRON_SECRET`.
+Automatic sync: set `AUTO_SYNC_INTERVAL_MINUTES=1440` on the backend (0 = off). Each run also
+does a small Zilliz read, which keeps a free-tier cluster from being suspended for inactivity.
+An external scheduler can instead call `POST /api/admin/sync/cron` with
+`Authorization: Bearer $CRON_SECRET`.
 
 ### 4. Test RAG
 POST /api/onboard  { "role": "recruiter", "industry": "Tech" }
 POST /api/query    { "question": "What databases do you know?", "session_id": "..." }
 
 ### 5. Deploy
-Frontend → Vercel (root directory `frontend`, set NEXT_PUBLIC_API_URL and CRON_SECRET)
-Backend  → Railway (connect GitHub repo, add env vars)
+
+```
+browser ──► Vercel (Next.js) ──/api/*──► Caddy (HTTPS) ──► FastAPI ──► Postgres, Redis
+                                         └──────────── OCI VM, docker-compose.prod.yml ───┘
+```
+
+The browser only ever talks to the Vercel domain; Vercel forwards `/api/*` to the backend
+(`frontend/next.config.mjs`). That keeps the admin cookie first-party and avoids CORS.
+
+**Backend (OCI VM, Ubuntu, Docker):**
+1. Point a DNS name (e.g. DuckDNS) at the VM and open ports 80/443 in the VCN security list.
+2. Clone the repo, then create:
+   - `.env` from `deploy/.env.example` (`API_DOMAIN`, `POSTGRES_PASSWORD`)
+   - `backend/.env` (app settings above, plus `AUTO_SYNC_INTERVAL_MINUTES=1440`)
+   - `backend/service-account.json`
+3. Move the data over once (backend not running yet):
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d postgres
+   SUPABASE_URL='postgresql://...' deploy/migrate-from-supabase.sh
+   ```
+4. Start everything: `docker compose -f docker-compose.prod.yml up -d --build`
+5. Nightly backups: see the header of `deploy/backup.sh` for the crontab line.
+
+Update after a push: `git pull && docker compose -f docker-compose.prod.yml up -d --build`
+
+**Frontend (Vercel):** import the repo with root directory `frontend` and set
+`NEXT_PUBLIC_API_URL=/api` and `BACKEND_URL=https://<API_DOMAIN>`.
