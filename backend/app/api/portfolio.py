@@ -1,20 +1,18 @@
-# backend/app/api/courses.py
-"""Public content for the home page: the portfolio (course folders + loose
-docs) and the skills diagram data. The old /courses CRUD, /courses/documents,
-and /courses/generate-description are gone — modules are now Documents grouped
-by an optional Course folder, edited from the homepage in edit mode."""
+# backend/app/api/portfolio.py
+"""Public content for the home page: the notes tree (folders + documents), the
+skills diagram data, and the resume download."""
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
-from app.db.models import Course, Document, Skill, Resume
+from app.db.models import Folder, Document, Skill, Resume
 from app.sync.google_client import NOTES_PREFIX
 
 router = APIRouter()
 
 
-def _doc_dict(d: Document) -> dict:
+def doc_dict(d: Document) -> dict:
     title = d.title or ""
     display = title[len(NOTES_PREFIX):] if title.startswith(NOTES_PREFIX) else title
     return {
@@ -27,46 +25,35 @@ def _doc_dict(d: Document) -> dict:
         "tag_status": d.tag_status or "pending",
         "needs_review": bool(d.needs_review),
         "parse_status": d.parse_status or "text",
-        "course_id": str(d.course_id) if d.course_id else None,
+        "folder_id": str(d.folder_id) if d.folder_id else None,
         "last_synced_at": d.last_synced_at.isoformat() if d.last_synced_at else None,
         "chunk_count": d.chunk_count or 0,
     }
 
 
+def folder_dict(f: Folder) -> dict:
+    return {
+        "id": str(f.id),
+        "name": f.name,
+        "parent_id": str(f.parent_id) if f.parent_id else None,
+        "sort_order": f.sort_order or 0,
+        "is_course": bool(f.is_course),
+        "summary": f.summary or "",
+        "is_currently_learning": bool(f.is_currently_learning),
+        "notes": f.notes or "",
+        "grade": f.grade or "",
+    }
+
+
 @router.get("/portfolio")
 async def get_portfolio(db: AsyncSession = Depends(get_db)):
-    """Everything the modules section renders: course folders with their docs,
-    plus folder-less docs at the same level (course_id NULL still displays)."""
-    # Modules in progress first, then alphabetical.
-    courses = (await db.execute(
-        select(Course).order_by(Course.is_currently_learning.desc(), Course.name)
-    )).scalars().all()
+    """The whole notes tree as two flat lists; the client links them by
+    parent_id / folder_id, so nesting depth is unlimited and it's one round
+    trip. Ordered so siblings come out in display order."""
+    folders = (await db.execute(select(Folder).order_by(
+        Folder.sort_order, Folder.is_currently_learning.desc(), Folder.name))).scalars().all()
     docs = (await db.execute(select(Document).order_by(Document.title))).scalars().all()
-
-    by_course: dict[str, list[dict]] = {}
-    loose: list[dict] = []
-    for d in docs:
-        dd = _doc_dict(d)
-        if d.course_id:
-            by_course.setdefault(str(d.course_id), []).append(dd)
-        else:
-            loose.append(dd)
-
-    return {
-        "courses": [
-            {
-                "id": str(c.id),
-                "name": c.name,
-                "summary": c.summary or "",
-                "is_currently_learning": bool(c.is_currently_learning),
-                "notes": c.notes or "",
-                "grade": c.grade or "",
-                "docs": by_course.get(str(c.id), []),
-            }
-            for c in courses
-        ],
-        "loose_docs": loose,
-    }
+    return {"folders": [folder_dict(f) for f in folders], "docs": [doc_dict(d) for d in docs]}
 
 
 @router.get("/skills")

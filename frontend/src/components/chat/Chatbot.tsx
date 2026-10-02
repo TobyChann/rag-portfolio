@@ -93,12 +93,13 @@ export default function Chatbot() {
                 const res = await fetch(`${API}/portfolio`);
                 if (!res.ok) return;
                 const data = await res.json();
+                const folderName: Record<string, string> = {};
+                (data.folders || []).forEach((f: any) => { folderName[f.id] = f.name; });
                 const map: Record<string, DocInfo> = {};
-                const add = (d: any, course: string) => {
-                    map[d.google_doc_id] = { name: d.display_name, summary: d.summary, skills: d.skills || [], course };
-                };
-                (data.courses || []).forEach((c: any) => (c.docs || []).forEach((d: any) => add(d, c.name)));
-                (data.loose_docs || []).forEach((d: any) => add(d, ""));
+                (data.docs || []).forEach((d: any) => {
+                    map[d.google_doc_id] = { name: d.display_name, summary: d.summary, skills: d.skills || [],
+                                             course: d.folder_id ? folderName[d.folder_id] ?? "" : "" };
+                });
                 setDocMap(map);
             } catch { /* sources just won't link — non-fatal */ }
         })();

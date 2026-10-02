@@ -77,9 +77,9 @@ class Document(Base):
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
  
-    # Folder: NULL = shown folder-less on the public page
-    course_id = Column(UUID(as_uuid=True),
-                       ForeignKey("courses.id", ondelete="SET NULL"),
+    # Containing folder; NULL = top level
+    folder_id = Column(UUID(as_uuid=True),
+                       ForeignKey("folders.id", ondelete="SET NULL"),
                        nullable=True, index=True)
  
     # Display metadata (tagging pipeline)
@@ -92,17 +92,25 @@ class Document(Base):
     skills = relationship("Skill", secondary=document_skills,
                           lazy="selectin", order_by="Skill.name")
 
-class Course(Base):
-    """A folder grouping related note documents on the public page."""
-    __tablename__ = "courses"
- 
+class Folder(Base):
+    """A node in the notes tree (adjacency list: parent_id, any depth). A folder
+    can hold folders and notes. A course is a folder with is_course set, which
+    also carries the course details below."""
+    __tablename__ = "folders"
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"),
+                       nullable=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Course details (used when is_course)
+    is_course = Column(Boolean, nullable=False, default=False)
     summary = Column(Text, nullable=True)
     is_currently_learning = Column(Boolean, default=False)
-    notes = Column(Text, nullable=True)
-    grade = Column(String, nullable=True)   # e.g. "A", "A-", "4.0" — free-text, owner-entered
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    notes = Column(Text, nullable=True)     # employer-facing note, e.g. "Teaching Assistant"
+    grade = Column(String, nullable=True)   # free text: "A", "A-", "Pass"…
 
 class ProfileNote(Base):
     """Living background: education, goal, preferences. One row per fact."""

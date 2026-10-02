@@ -9,13 +9,15 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from app.db.database import get_db
 from app.db.crud import get_stats
-from app.db.models import Course, Skill, ProfileNote, Document, Resume
+from app.db.models import Folder, Skill, ProfileNote, Document, Resume
+from app.api.portfolio import doc_dict, folder_dict
 from app.cache.redis_client import get_redis
 from app.cache.query_cache import clear_answer_cache
 from app.sync import resume as resume_mod
+from app.rag.overview import invalidate_overview
 from app.sync.ingestion import (
     ingest_document,
     list_all_files,
@@ -271,7 +273,25 @@ async def delete_profile_note(note_id: str, db: AsyncSession = Depends(get_db)):
 class DocUpdate(BaseModel):
     summary: Optional[str] = None
     skills: Optional[List[str]] = None
-    course_id: Optional[str] = None   # "" clears the folder
+    folder_id: Optional[str] = None   # "" moves the note to the top level
+
+
+async def _tree_changed():
+    """Folder or note-location edits change the modules overview the chatbot
+    reads, so drop it and any answers cached from the old one."""
+    invalidate_overview()
+    await clear_answer_cache()
+
+
+async def _get_folder(db: AsyncSession, folder_id: str) -> Folder:
+    try:
+        fid = uuid.UUID(folder_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    folder = (await db.execute(select(Folder).where(Folder.id == fid))).scalar_one_or_none()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    return folder
 
 
 @router.post("/documents/{google_doc_id}/generate-tags", dependencies=[Depends(require_admin)])
@@ -292,7 +312,7 @@ async def generate_tags_for_doc(google_doc_id: str, db: AsyncSession = Depends(g
 @router.patch("/documents/{google_doc_id}", dependencies=[Depends(require_admin)])
 async def update_document(google_doc_id: str, req: DocUpdate, db: AsyncSession = Depends(get_db)):
     """Save edited summary/skills (approves + clears review flag) and/or move
-    the doc between folders. Skill names resolve through the inventory —
+    the doc to another folder. Skill names resolve through the inventory —
     unknown names are created in the off-diagram pool automatically."""
     result = await db.execute(select(Document).where(Document.google_doc_id == google_doc_id))
     doc = result.scalar_one_or_none()
@@ -306,94 +326,111 @@ async def update_document(google_doc_id: str, req: DocUpdate, db: AsyncSession =
     if req.summary is not None or req.skills is not None:
         doc.tag_status = "approved"
         doc.needs_review = False
-    if req.course_id is not None:
-        doc.course_id = uuid.UUID(req.course_id) if req.course_id else None
+    if req.folder_id is not None:
+        doc.folder_id = (await _get_folder(db, req.folder_id)).id if req.folder_id else None
 
     # Serialize BEFORE commit — commit expires attributes, and touching the
     # skills relationship afterwards would lazy-load → MissingGreenlet.
-    payload = {
-        "google_doc_id": doc.google_doc_id,
-        "summary": doc.summary or "",
-        "skills": [s.name for s in doc.skills],
-        "tag_status": doc.tag_status,
-        "needs_review": bool(doc.needs_review),
-        "course_id": str(doc.course_id) if doc.course_id else None,
-    }
+    payload = doc_dict(doc)
     await db.commit()
+    if req.folder_id is not None:
+        await _tree_changed()
     return payload
 
 
-# ── Courses (folders) ────────────────────────────────────
+# ── Folders (the notes tree) ─────────────────────────────
 
-class CourseCreate(BaseModel):
+class FolderCreate(BaseModel):
     name: str
+    parent_id: Optional[str] = None
+    is_course: bool = False
 
 
-class CourseUpdate(BaseModel):
+class FolderUpdate(BaseModel):
     name: Optional[str] = None
+    parent_id: Optional[str] = None   # "" moves the folder to the top level
+    sort_order: Optional[int] = None
+    is_course: Optional[bool] = None
     summary: Optional[str] = None
     is_currently_learning: Optional[bool] = None
     notes: Optional[str] = None
     grade: Optional[str] = None
 
 
-def _serialize_course(c: Course) -> dict:
-    return {"id": str(c.id), "name": c.name, "summary": c.summary or "",
-            "is_currently_learning": bool(c.is_currently_learning),
-            "notes": c.notes or "", "grade": c.grade or ""}
+async def _is_descendant(db: AsyncSession, folder_id: uuid.UUID, maybe_child: uuid.UUID) -> bool:
+    """True if maybe_child is folder_id or sits anywhere beneath it. Walks up
+    from maybe_child, so cost is the tree depth."""
+    parents = dict((await db.execute(select(Folder.id, Folder.parent_id))).all())
+    node, seen = maybe_child, set()
+    while node is not None and node not in seen:
+        if node == folder_id:
+            return True
+        seen.add(node)
+        node = parents.get(node)
+    return False
 
 
-@router.post("/courses", dependencies=[Depends(require_admin)])
-async def create_course(req: CourseCreate, db: AsyncSession = Depends(get_db)):
-    course = Course(name=req.name.strip() or "Untitled")
-    db.add(course)
+@router.post("/folders", dependencies=[Depends(require_admin)])
+async def create_folder(req: FolderCreate, db: AsyncSession = Depends(get_db)):
+    parent = (await _get_folder(db, req.parent_id)).id if req.parent_id else None
+    folder = Folder(name=req.name.strip() or "Untitled", parent_id=parent, is_course=req.is_course)
+    db.add(folder)
     await db.commit()
-    await db.refresh(course)
-    return _serialize_course(course)
+    await db.refresh(folder)
+    await _tree_changed()
+    return folder_dict(folder)
 
 
-@router.patch("/courses/{course_id}", dependencies=[Depends(require_admin)])
-async def update_course(course_id: str, req: CourseUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Course).where(Course.id == course_id))
-    course = result.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-    if req.name is not None:    course.name = req.name.strip() or course.name
-    if req.summary is not None: course.summary = req.summary.strip()
-    if req.is_currently_learning is not None: course.is_currently_learning = req.is_currently_learning
-    if req.notes is not None:   course.notes = req.notes.strip()
-    if req.grade is not None:   course.grade = req.grade.strip() or None
+@router.patch("/folders/{folder_id}", dependencies=[Depends(require_admin)])
+async def update_folder(folder_id: str, req: FolderUpdate, db: AsyncSession = Depends(get_db)):
+    folder = await _get_folder(db, folder_id)
+    if req.parent_id is not None:
+        if req.parent_id:
+            parent = await _get_folder(db, req.parent_id)
+            if await _is_descendant(db, folder.id, parent.id):
+                raise HTTPException(status_code=400, detail="Can't move a folder into itself")
+            folder.parent_id = parent.id
+        else:
+            folder.parent_id = None
+    if req.name is not None:       folder.name = req.name.strip() or folder.name
+    if req.sort_order is not None: folder.sort_order = req.sort_order
+    if req.is_course is not None:  folder.is_course = req.is_course
+    if req.summary is not None:    folder.summary = req.summary.strip()
+    if req.is_currently_learning is not None: folder.is_currently_learning = req.is_currently_learning
+    if req.notes is not None:      folder.notes = req.notes.strip()
+    if req.grade is not None:      folder.grade = req.grade.strip() or None
     await db.commit()
-    await db.refresh(course)
-    return _serialize_course(course)
+    await db.refresh(folder)
+    await _tree_changed()
+    return folder_dict(folder)
 
 
-@router.delete("/courses/{course_id}", dependencies=[Depends(require_admin)])
-async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
-    """Docs in the folder become folder-less (course_id → NULL), not deleted."""
-    result = await db.execute(select(Course).where(Course.id == course_id))
-    course = result.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-    await db.delete(course)
+@router.delete("/folders/{folder_id}", dependencies=[Depends(require_admin)])
+async def delete_folder(folder_id: str, db: AsyncSession = Depends(get_db)):
+    """Deletes only the folder: its subfolders and notes move up to its parent."""
+    folder = await _get_folder(db, folder_id)
+    await db.execute(update(Folder).where(Folder.parent_id == folder.id)
+                     .values(parent_id=folder.parent_id))
+    await db.execute(update(Document).where(Document.folder_id == folder.id)
+                     .values(folder_id=folder.parent_id))
+    await db.delete(folder)
     await db.commit()
+    await _tree_changed()
     return {"ok": True}
 
 
-@router.post("/courses/{course_id}/generate-summary", dependencies=[Depends(require_admin)])
-async def course_summary_draft(course_id: str, db: AsyncSession = Depends(get_db)):
-    """Draft a folder summary from its docs' summaries. Returns a draft only."""
-    result = await db.execute(select(Course).where(Course.id == course_id))
-    course = result.scalar_one_or_none()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+@router.post("/folders/{folder_id}/generate-summary", dependencies=[Depends(require_admin)])
+async def folder_summary_draft(folder_id: str, db: AsyncSession = Depends(get_db)):
+    """Draft a course summary from the summaries of the notes directly inside
+    it. Returns a draft only."""
+    folder = await _get_folder(db, folder_id)
     docs = (await db.execute(
-        select(Document).where(Document.course_id == course.id))).scalars().all()
+        select(Document).where(Document.folder_id == folder.id))).scalars().all()
     summaries = [d.summary for d in docs if d.summary]
     if not summaries:
-        raise HTTPException(status_code=400, detail="No doc summaries in this folder yet")
+        raise HTTPException(status_code=400, detail="No note summaries in this folder yet")
     try:
-        draft = await generate_course_summary(course.name, summaries)
+        draft = await generate_course_summary(folder.name, summaries)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Summary generation failed: {e}")
     return {"summary": draft}

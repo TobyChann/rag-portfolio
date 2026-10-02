@@ -27,7 +27,13 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
+    # Migrations first: they rename legacy tables that create_all would
+    # otherwise shadow with fresh empty ones.
+    from app.db.migrations import run_migrations
     async with engine.begin() as conn:
+        applied = await run_migrations(conn)
+        if applied:
+            print(f"[startup] Applied migrations: {', '.join(applied)}")
         await conn.run_sync(Base.metadata.create_all)
 
 

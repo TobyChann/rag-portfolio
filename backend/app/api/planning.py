@@ -22,6 +22,7 @@ from app.rag.retriever import retrieve
 from app.config import get_settings
 from app.llm import gemini_client
 from app.sync.resume import get_resume_text
+from app.rag.overview import get_overview
 
 settings = get_settings()
 
@@ -74,8 +75,10 @@ async def _profile_block(db: AsyncSession) -> str:
     ) or "(empty)"
     resume = await get_resume_text()
     resume_txt = f"\n\nRESUME:\n{resume}" if resume else ""
+    overview = await get_overview()
+    overview_txt = f"\n\nMODULES TAKEN (grades and summaries):\n{overview}" if overview else ""
     return (f"OWNER PROFILE:\n{profile}\n\nSKILL INVENTORY (skills the owner has):\n{skills_txt}"
-            f"{resume_txt}")
+            f"{overview_txt}{resume_txt}")
 
 
 async def _notes_block(question: str) -> str:
