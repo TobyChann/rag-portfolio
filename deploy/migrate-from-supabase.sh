@@ -28,8 +28,11 @@ docker run --rm postgres:17 pg_dump "$SUPABASE_URL" \
   --exclude-table-data=public.visitors --exclude-table-data=public.queries > "$DUMP"
 
 echo "→ Restoring into the production database"
-# ON_ERROR_STOP: fail loudly rather than leave a half-restored database.
-$COMPOSE exec -T postgres psql -U portfolio -d portfolio -v ON_ERROR_STOP=1 < "$DUMP"
+# A dump of an explicitly selected schema starts with CREATE SCHEMA public,
+# which a fresh database already has — drop that line. --single-transaction +
+# ON_ERROR_STOP: any error rolls the whole restore back, never half-applied.
+sed '/^CREATE SCHEMA public;$/d' "$DUMP" | \
+  $COMPOSE exec -T postgres psql -U portfolio -d portfolio -v ON_ERROR_STOP=1 --single-transaction -q
 
 echo "→ Row counts after restore:"
 $COMPOSE exec -T postgres psql -U portfolio -d portfolio -c "
