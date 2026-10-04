@@ -18,8 +18,11 @@ DUMP="/tmp/supabase-public-$(date +%Y%m%d-%H%M%S).sql"
 echo "→ Dumping public schema from Supabase to $DUMP"
 # pg_dump from a throwaway postgres:17 container, so the server needs no
 # Postgres client installed. --no-owner/--no-acl drop Supabase-specific roles.
+# Visitor analytics (visitors, queries) come across as empty tables: the test
+# database's sessions and questions shouldn't count as production traffic.
 docker run --rm postgres:17 pg_dump "$SUPABASE_URL" \
-  --schema=public --no-owner --no-acl --format=plain > "$DUMP"
+  --schema=public --no-owner --no-acl --format=plain \
+  --exclude-table-data=public.visitors --exclude-table-data=public.queries > "$DUMP"
 
 echo "→ Restoring into the production database"
 # ON_ERROR_STOP: fail loudly rather than leave a half-restored database.
