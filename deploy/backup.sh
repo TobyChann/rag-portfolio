@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Nightly compressed dump of the production database, keeping the last 14.
-# Install from the repo root on the server (runs daily at 03:00 server time):
+# Install from the repo root on the server. The VM's clock is UTC, so 19:00
+# here is 03:00 in Singapore. Ubuntu Minimal images ship without cron:
+# `sudo apt-get install -y cron` first.
 #
-#   (crontab -l 2>/dev/null; echo "0 3 * * * cd $PWD && deploy/backup.sh >> $HOME/backups/backup.log 2>&1") | crontab -
+#   (crontab -l 2>/dev/null; echo "0 19 * * * cd $PWD && deploy/backup.sh >> $HOME/backups/backup.log 2>&1") | crontab -
 #
 # Restore one with:
 #   gunzip -c ~/backups/portfolio-YYYYMMDD-HHMMSS.sql.gz | \
