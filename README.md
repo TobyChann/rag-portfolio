@@ -44,7 +44,7 @@ browser ──► Vercel (Next.js) ──/api/*──► Caddy (HTTPS) ──►
 ```
 
 The browser only ever talks to the Vercel domain; Vercel forwards `/api/*` to the backend
-(`frontend/next.config.mjs`). That keeps the admin cookie first-party and avoids CORS.
+(`frontend/src/middleware.ts`). That keeps the admin cookie first-party and avoids CORS.
 
 **Backend (OCI VM, Ubuntu, Docker):**
 1. Point a DNS name (e.g. DuckDNS) at the VM and open ports 80/443 in the VCN security list.
@@ -63,4 +63,6 @@ The browser only ever talks to the Vercel domain; Vercel forwards `/api/*` to th
 Update after a push: `git pull && docker compose -f docker-compose.prod.yml up -d --build`
 
 **Frontend (Vercel):** import the repo with root directory `frontend` and set
-`NEXT_PUBLIC_API_URL=/api` and `BACKEND_URL=https://<API_DOMAIN>`.
+`NEXT_PUBLIC_API_URL=/api`, `BACKEND_URL=https://<API_DOMAIN>`, and `PROXY_SECRET` (same value as
+`PROXY_SECRET` in the server's `backend/.env`; it lets the backend trust the visitor IP the
+frontend forwards, which per-IP rate limiting depends on).

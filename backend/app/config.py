@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     # Comma-separated origins allowed outside development (your Vercel URL).
     cors_origins: str = ""
+    # Shared with the Vercel frontend's middleware, which forwards the
+    # visitor's IP; see app/client_ip.py. Empty = never trust forwarded IPs.
+    proxy_secret: str = ""
     rate_limit_per_hour: int = 20
     session_ttl_seconds: int = 86400
 

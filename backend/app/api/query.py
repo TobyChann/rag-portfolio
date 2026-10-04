@@ -13,6 +13,7 @@ from app.cache.rate_limiter import check_rate_limit
 from app.cache.query_cache import set_session, get_session
 from app.api.admin import require_admin
 from app.config import get_settings
+from app.client_ip import client_ip
 import uuid
 
 router = APIRouter()
@@ -47,7 +48,7 @@ async def onboard(
             session_id=session_id,
             role=req.role,
             industry=req.industry,
-            ip=request.client.host,
+            ip=client_ip(request),
             user_agent=request.headers.get("user-agent", ""),
             referrer=req.referrer,
         )
