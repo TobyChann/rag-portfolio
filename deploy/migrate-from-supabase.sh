@@ -12,6 +12,9 @@
 set -euo pipefail
 
 : "${SUPABASE_URL:?set SUPABASE_URL to the Supabase connection string}"
+# A .env saved on Windows leaves a trailing \r, which libpq reads as part of
+# the database name ("database "postgres" does not exist").
+SUPABASE_URL="${SUPABASE_URL%$'\r'}"
 COMPOSE="docker compose -f docker-compose.prod.yml"
 DUMP="/tmp/supabase-public-$(date +%Y%m%d-%H%M%S).sql"
 
