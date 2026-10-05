@@ -7,10 +7,10 @@ import SkillsBoard from "@/components/admin/SkillsBoard";
 
 import { API_BASE as API } from "@/lib/api";
 
-// ─── Content (hardcoded — home_content is gone; edit here) ───  // EDIT ME
+// ─── Content
 const PROFILE = {
   name: "Hi, I'm Toby",
-  tagline: "Information Systems & Accountancy @ SMU · aspiring analytics engineer",
+  tagline: "Information Systems & Accountancy @ SMU",
   bio: "I build data products end to end — this site is one of them. Everything below is generated from my actual study notes: they're ingested from Google Drive, embedded, and queryable through the chat. Ask it anything about what I know.",
 };
 
@@ -19,7 +19,7 @@ const EDUCATION = {
   degree: "BSc (Information Systems, Business Analytics)",
   double: "Bachelor of Accountancy (double degree)",
   period: "Aug 2023 – Nov 2027",
-  gpa: "3.93 / 4.00",               // empty hides the badge
+  gpa: "3.93 / 4.00",
   awards: ["Dean's List AY23/24", "Dean's List AY24/25", "Dean's List AY25/26",
            "SCIS Achievements Scholarship", "Teaching Assistant, IS430 Digital Payments and Innovation"],
 };
@@ -114,7 +114,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ── Intro (hardcoded) ────────────────────── */}
+      {/* ── Intro ────────────────────── */}
       <section style={{ marginBottom: 48 }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 4 }}>{PROFILE.name}</h1>
         <p style={{ fontSize: 16, color: "var(--fg-muted)", marginBottom: 12 }}>{PROFILE.tagline}</p>
