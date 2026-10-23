@@ -1,6 +1,3 @@
-export type VisitorRole = "recruiter" | "hiring_manager" | "peer" | "curious";
-export type Industry = "Tech" | "Finance" | "Government" | "Healthcare" | "Other";
-
 export interface Source {
   google_doc_id: string;
   title: string;

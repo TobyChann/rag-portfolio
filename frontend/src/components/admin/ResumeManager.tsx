@@ -83,7 +83,7 @@ export default function ResumeManager() {
           {busy ? "Working…" : meta?.exists ? "Replace…" : "Upload…"}
         </button>
         {meta?.exists && (
-          <button onClick={remove} disabled={busy} className="btn btn-ghost" style={{ color: "#DC2626" }}>Remove</button>
+          <button onClick={remove} disabled={busy} className="btn btn-ghost" style={{ color: "var(--danger)" }}>Remove</button>
         )}
       </div>
       {msg && <p style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 10 }}>{msg}</p>}

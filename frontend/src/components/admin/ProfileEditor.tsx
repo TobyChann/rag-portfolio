@@ -164,7 +164,7 @@ export default function ProfileEditor() {
         </div>
       </div>
 
-      {error && <p style={{ fontSize: 12, color: "#DC2626" }}>{error}</p>}
+      {error && <p style={{ fontSize: 12, color: "var(--danger)" }}>{error}</p>}
       {notes.length === 0 && (
         <p style={{ fontSize: 13, color: "var(--fg-subtle)", fontStyle: "italic" }}>
           Empty. Start with a goal — the planning chat is only as good as this profile.

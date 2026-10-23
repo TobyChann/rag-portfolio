@@ -13,7 +13,9 @@ from sqlalchemy import select, func, update
 from app.db.database import get_db
 from app.db.crud import get_stats
 from app.db.models import Folder, Skill, ProfileNote, Document, Resume
+from app.api.auth import ADMIN_COOKIE, require_admin
 from app.api.portfolio import doc_dict, folder_dict
+from app.revalidate import refresh_public_pages
 from app.cache.redis_client import get_redis
 from app.cache.query_cache import clear_answer_cache
 from app.sync import resume as resume_mod
@@ -36,7 +38,6 @@ router = APIRouter()
 settings = get_settings()
 
 SESSION_TTL = 60 * 60 * 24 * 30
-ADMIN_COOKIE = "admin_session"
 
 
 def _hash_password(password: str) -> str:
@@ -46,17 +47,6 @@ def _hash_password(password: str) -> str:
 def _password_ok(password: str) -> bool:
     expected = settings.admin_password_hash
     return bool(expected) and hmac.compare_digest(_hash_password(password), expected)
-
-
-async def require_admin(request: Request):
-    r = await get_redis()
-    token = request.cookies.get(ADMIN_COOKIE)
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    valid = await r.get(f"admin_session:{token}")
-    if not valid:
-        raise HTTPException(status_code=401, detail="Session expired")
-    return token
 
 
 # ── Auth ────────────────────────────────────────────
@@ -180,6 +170,7 @@ async def create_skill(req: SkillCreate, db: AsyncSession = Depends(get_db)):
     db.add(skill)
     await db.commit()
     await db.refresh(skill)
+    await refresh_public_pages()
     return _serialize_skill(skill)
 
 
@@ -195,6 +186,7 @@ async def update_skill(skill_id: str, req: SkillUpdate, db: AsyncSession = Depen
     if req.sort_order is not None: skill.sort_order = req.sort_order
     await db.commit()
     await db.refresh(skill)
+    await refresh_public_pages()
     return _serialize_skill(skill)
 
 
@@ -207,6 +199,7 @@ async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Skill not found")
     await db.delete(skill)
     await db.commit()
+    await refresh_public_pages()
     return {"ok": True}
 
 
@@ -281,6 +274,7 @@ async def _tree_changed():
     reads, so drop it and any answers cached from the old one."""
     invalidate_overview()
     await clear_answer_cache()
+    await refresh_public_pages()
 
 
 async def _get_folder(db: AsyncSession, folder_id: str) -> Folder:
@@ -335,6 +329,8 @@ async def update_document(google_doc_id: str, req: DocUpdate, db: AsyncSession =
     await db.commit()
     if req.folder_id is not None:
         await _tree_changed()
+    else:
+        await refresh_public_pages()
     return payload
 
 
@@ -459,6 +455,7 @@ async def _run_batch(docs: List[BatchDoc]):
     for d in docs:
         if _batch_job.get("cancel"):
             _batch_job["status"] = "cancelled"
+            await refresh_public_pages()
             return
         _batch_job["current"] = d.name or d.id
         # Isolate each doc: one failure (bad export, parse crash, etc.) must not
@@ -480,6 +477,7 @@ async def _run_batch(docs: List[BatchDoc]):
         await asyncio.sleep(INGEST_PACING_SECONDS)
     _batch_job["status"] = "done"
     _batch_job["current"] = ""
+    await refresh_public_pages()
 
 
 @router.post("/ingest/batch", dependencies=[Depends(require_admin)])
@@ -647,6 +645,7 @@ async def upload_resume(file: UploadFile = File(...), db: AsyncSession = Depends
     await db.refresh(r)
     resume_mod.invalidate_resume_cache()
     await clear_answer_cache()
+    await refresh_public_pages()
     return _resume_meta(r)
 
 
@@ -657,4 +656,5 @@ async def delete_resume(db: AsyncSession = Depends(get_db)):
     await db.commit()
     resume_mod.invalidate_resume_cache()
     await clear_answer_cache()
+    await refresh_public_pages()
     return {"exists": False}

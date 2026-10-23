@@ -3,7 +3,7 @@
 RAG-powered portfolio site. Employers can ask questions about skills and coursework via an embedded chatbot backed by Google Docs and Zilliz. Answers come from gpt-4o-mini; note parsing and tagging run on Gemini.
 
 ## Stack
-Backend: FastAPI · Zilliz Cloud · Redis · Supabase (Postgres) · sentence-transformers (all-MiniLM-L6-v2)
+Backend: FastAPI · Zilliz Cloud · Redis · Postgres (pgvector image) · sentence-transformers (all-MiniLM-L6-v2)
 LLMs: gpt-4o-mini (visitor answers) · Gemini 3.5 Flash (multimodal parsing) · Gemini 3.1 Flash Lite (tagging) · Gemini 2.5 Flash (planning chat)
 Frontend: Next.js · Tailwind · Vercel
 
@@ -14,13 +14,17 @@ Create `backend/.env` with:
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ZILLIZ_URI`, `ZILLIZ_TOKEN`, `DATABASE_URL`, `REDIS_URL`,
 `GOOGLE_DRIVE_FOLDER_ID`, `ADMIN_PASSWORD_HASH` (optional: `RAG_PROVIDER=gemini` to answer on Gemini instead,
 `OPENAI_RAG_MODEL`, `TAG_MODEL`, `PARSE_MODEL`, `RAG_MODEL`, `PLANNING_MODEL`, `HF_TOKEN`,
-`CRON_SECRET`, `AUTO_SYNC_INTERVAL_MINUTES`, `SYNC_INGEST_NEW_NOTES`).
+`CRON_SECRET`, `AUTO_SYNC_INTERVAL_MINUTES`, `SYNC_INGEST_NEW_NOTES`,
+`FRONTEND_REVALIDATE_URL`, `REVALIDATE_SECRET`).
 Add your `service-account.json` to `backend/`.
 
 ### 2. Start locally
 ```bash
 docker-compose up
 ```
+Local compose runs its own `pgvector/pgvector:pg17` Postgres (the production image) and points the
+backend at it, overriding `DATABASE_URL` in `backend/.env`. It starts empty; load a copy of production
+with `pg_dump` from the VM if you need real data.
 
 ### 3. Ingestion and sync
 Name note docs `Notes_<Module>` in the Drive folder. **Sync** (admin panel, `POST /api/admin/sync`)
@@ -33,7 +37,7 @@ An external scheduler can instead call `POST /api/admin/sync/cron` with
 `Authorization: Bearer $CRON_SECRET`.
 
 ### 4. Test RAG
-POST /api/onboard  { "role": "recruiter", "industry": "Tech" }
+POST /api/onboard  {}   (role and industry are optional; PATCH /api/visitor sets them later)
 POST /api/query    { "question": "What databases do you know?", "session_id": "..." }
 
 ### 5. Deploy
@@ -65,4 +69,8 @@ Update after a push: `git pull && docker compose -f docker-compose.prod.yml up -
 **Frontend (Vercel):** import the repo with root directory `frontend` and set
 `NEXT_PUBLIC_API_URL=/api`, `BACKEND_URL=https://<API_DOMAIN>`, and `PROXY_SECRET` (same value as
 `PROXY_SECRET` in the server's `backend/.env`; it lets the backend trust the visitor IP the
-frontend forwards, which per-IP rate limiting depends on).
+frontend forwards, which per-IP rate limiting depends on). For instant homepage updates after
+curation and syncs, also set `REVALIDATE_SECRET` on Vercel, and on the backend set the same value as
+`REVALIDATE_SECRET` plus `FRONTEND_REVALIDATE_URL=https://<vercel-domain>/revalidate`; without them the
+homepage still refreshes every 5 minutes. Set `NEXT_PUBLIC_SITE_URL` to the public URL if it differs
+from the Vercel production domain (used for canonical URLs and the sitemap).

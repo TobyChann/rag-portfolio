@@ -282,7 +282,7 @@ export default function PlanningPage() {
           <div ref={bottomRef} />
         </div>
 
-        {error && <p style={{ fontSize: 12, color: "#DC2626", marginBottom: 6 }}>{error}</p>}
+        {error && <p style={{ fontSize: 12, color: "var(--danger)", marginBottom: 6 }}>{error}</p>}
 
         {/* Composer */}
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
