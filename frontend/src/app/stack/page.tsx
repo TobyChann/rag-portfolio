@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
-import PinchZoomImage from "@/components/ui/PinchZoomImage";
+import PinchZoom from "@/components/ui/PinchZoom";
+import C4Diagram, { C4_LEGENDS, legendColor } from "@/components/stack/C4Diagram";
 
 type Tab = "c1" | "c2" | "c3";
 
@@ -10,33 +11,11 @@ const C4_TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "c3", label: "C3 — Components", desc: "What are the internal modules inside the FastAPI backend?" },
 ];
 
-const LEGENDS: Record<Tab, { color: string; label: string }[]> = {
-  c1: [
-    { color: "#93C5FD", label: "People" },
-    { color: "#6EE7B7", label: "Core system" },
-    { color: "#FCD34D", label: "External services" },
-    { color: "#FCA5A5", label: "Databases" },
-  ],
-  c2: [
-    { color: "#93C5FD", label: "Frontend" },
-    { color: "#6EE7B7", label: "Backend" },
-    { color: "#FCD34D", label: "Cache" },
-    { color: "#FCA5A5", label: "Databases" },
-    { color: "#C4B5FD", label: "External APIs" },
-  ],
-  c3: [
-    { color: "#C4B5FD", label: "API routes" },
-    { color: "#6EE7B7", label: "RAG pipeline" },
-    { color: "#FCD34D", label: "Sync / ingestion" },
-    { color: "#93C5FD", label: "Cache / data layer" },
-  ],
-};
-
 const INGESTION_STEPS = [
-  { num:"01", title:"Source and sync", body:"Notes live as Google Docs in a Drive folder, read through a service account with a read-only scope (no OAuth flow). A scheduled delta sync (daily via Vercel Cron, or an in-process interval on the backend) compares each Doc's modifiedTime against its stored last_synced_at, re-ingests only the documents that changed, and picks up new notes named with the Notes_ prefix. Anything else is added deliberately through the admin Drive picker.", tags:["Google Drive API","Service account","Delta sync","Vercel Cron"] },
+  { num:"01", title:"Source and sync", body:"Notes live as Google Docs in a Drive folder, read through a service account with a read-only scope (no OAuth flow). A daily delta sync (an in-process interval on the backend; an authenticated cron endpoint can trigger it too) compares each Doc's modifiedTime against its stored last_synced_at, re-ingests only the documents that changed, and picks up new notes named with the Notes_ prefix. Anything else is added deliberately through the admin Drive picker.", tags:["Google Drive API","Service account","Delta sync","Daily interval"] },
   { num:"02", title:"Multimodal parsing", body:"Text-only Docs are exported straight to text. Docs containing images, diagrams, or screenshots are exported as PDF and passed to Gemini 3.5 Flash, which transcribes every visible character — including text baked into images — and infers heading levels into clean Markdown. Docs too large for Drive's ~10 MB PDF export (or whose whole-doc parse fails) are recovered by exporting the body text and OCRing each inline image in small batches. Rate-limit and 503 overload errors are retried with exponential backoff; only if every route fails does the note fall back to plain text, flagged so the miss is never silent.", tags:["Gemini 3.5 Flash","PDF export","Per-image OCR","Fallback status"] },
   { num:"03", title:"Chunking and embedding", body:"Markdown is split at heading boundaries to preserve topic context, with long sections further split at roughly 20% character overlap. Each chunk is embedded locally with all-MiniLM-L6-v2 (384 dimensions) via sentence-transformers — no external API call and zero embedding cost.", tags:["all-MiniLM-L6-v2","sentence-transformers","384-dim"] },
-  { num:"04", title:"Storage and tagging", body:"Chunks are deleted and re-upserted per document into Zilliz Cloud (managed Milvus), so re-ingesting a note atomically replaces its stale vectors and nothing else. Document metadata, chunk counts, and sync timestamps are tracked in Supabase Postgres via async SQLAlchemy. A separate Gemini 3.1 Flash Lite pass drafts a summary and extracts skill tags for the portfolio; tags are never overwritten once approved, and re-synced notes are flagged for review.", tags:["Zilliz Cloud","PyMilvus","Supabase","Gemini 3.1 Flash Lite"] },
+  { num:"04", title:"Storage and tagging", body:"Chunks are deleted and re-upserted per document into Zilliz Cloud (managed Milvus), so re-ingesting a note atomically replaces its stale vectors and nothing else. Document metadata, chunk counts, and sync timestamps are tracked in Postgres (self-hosted on the VM) via async SQLAlchemy. A separate Gemini 3.1 Flash Lite pass drafts a summary and extracts skill tags for the portfolio; tags are never overwritten once approved, and re-synced notes are flagged for review.", tags:["Zilliz Cloud","PyMilvus","PostgreSQL","Gemini 3.1 Flash Lite"] },
 ];
 
 const RAG_STEPS = [
@@ -60,7 +39,7 @@ const JUSTIFICATIONS = [
 // and the next step when it's needed. Kept honest — "next" items aren't built.
 const SCALING = [
   { area:"Stateless API",        now:"Admin sessions, rate-limit counters and the answer cache live in Redis, not in process memory. The resume text and module outline are cached per process.", next:"Run several backend replicas behind a load balancer; move the two per-process caches to Redis so an edit invalidates every replica." },
-  { area:"Relational data",      now:"Postgres through async SQLAlchemy + asyncpg. DATABASE_URL is the only coupling to the provider.", next:"Move between Supabase, self-hosted Postgres or a managed service by changing one variable; add PgBouncer and read replicas for connection-heavy load." },
+  { area:"Relational data",      now:"PostgreSQL 17 in Docker on the VM, reached through async SQLAlchemy + asyncpg, with a nightly pg_dump backup. DATABASE_URL is the only coupling to where it runs (it moved off Supabase with one variable).", next:"Move to a managed Postgres the same way; add PgBouncer and read replicas for connection-heavy load." },
   { area:"LLM cost and latency", now:"Exact-match Redis cache, per-IP rate limiting, short low-temperature answers, brief retries on provider overload.", next:"Semantic caching (embedding similarity) to also catch paraphrased repeat questions." },
   { area:"Ingestion",            now:"Background task in the API process, one job at a time behind a lock, per-document failure isolation.", next:"A Redis-backed job queue with separate workers, so heavy parsing never competes with visitor queries." },
   { area:"Scheduling",           now:"Daily delta sync via an interval loop or an authenticated cron endpoint; each run also keeps the vector DB active.", next:"With multiple replicas, trigger only through the cron endpoint and swap the in-process lock for a Redis lock." },
@@ -78,10 +57,11 @@ const STACK = [
   { name:"Gemini 2.5 Flash",     role:"Planning assistant",     reason:"Owner-only career-planning chat grounded in the notes and skill board; thinking stays on here because reasoning matters more than latency.", tag:"ai" },
   { name:"Gemini 3.1 Flash Lite",role:"Auto-tagging",           reason:"Higher free-tier throughput for the formulaic pass that drafts note summaries and extracts skills.",  tag:"ai" },
   { name:"sentence-transformers",role:"Embedding runtime",      reason:"Runs the MiniLM model locally inside the container for both ingestion and query embedding.",         tag:"ai" },
-  { name:"Supabase",             role:"Postgres database",      reason:"Managed Postgres for document metadata, sync timestamps, visitor logs, and query history.",          tag:"data" },
+  { name:"PostgreSQL 17",        role:"Relational database",    reason:"Self-hosted in Docker (pgvector image) for document metadata, skills, visitor logs and query history; backed up nightly.", tag:"data" },
   { name:"SQLAlchemy",           role:"Async ORM",              reason:"Async models over the asyncpg driver — one data layer for documents, courses, skills, and chats.",  tag:"data" },
   { name:"Redis",                role:"Cache and rate limiting",reason:"Q&A cache, per-IP rate limiting, and session state. Three jobs, one tool.",                          tag:"infra" },
   { name:"Google Drive API",     role:"Note source + sync",     reason:"Service-account read access to the notes folder; delta sync re-ingests only changed docs.",          tag:"infra" },
+  { name:"OCI VM + Caddy",       role:"Hosting",                reason:"Always Free Oracle Cloud VM runs the backend, Postgres and Redis with docker compose; Caddy terminates HTTPS. Vercel forwards /api/* to it.", tag:"infra" },
   { name:"Docker",               role:"Containerisation",       reason:"Reproducible builds and a long-lived process — no serverless timeout on 15–25s RAG queries.",       tag:"infra" },
 ];
 
@@ -201,16 +181,14 @@ export default function StackPage() {
           {C4_TABS.find(t => t.id===activeTab)?.desc}
         </p>
         <div key={activeTab} className="fade-in">
-          <PinchZoomImage
-            src={`/diagrams/${activeTab.toUpperCase()}.png`}
-            alt={`C4 ${activeTab.toUpperCase()} architecture diagram`}
-            fallbackLabel={`Drop public/diagrams/${activeTab.toUpperCase()}.png to load this diagram`}
-          />
+          <PinchZoom label={`C4 ${activeTab.toUpperCase()} architecture diagram`}>
+            <C4Diagram level={activeTab} />
+          </PinchZoom>
         </div>
         <div style={{ display:"flex", flexWrap:"wrap", gap:16, marginTop:12, marginBottom:32 }}>
-          {LEGENDS[activeTab].map(l => (
+          {C4_LEGENDS[activeTab].map(l => (
             <div key={l.label} style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <div style={{ width:10, height:10, borderRadius:2, background:l.color }} />
+              <div style={{ width:10, height:10, borderRadius:2, background:legendColor(l.kind), border:"1px solid var(--border-strong)" }} />
               <span style={{ fontSize:12, color:"var(--fg-muted)" }}>{l.label}</span>
             </div>
           ))}

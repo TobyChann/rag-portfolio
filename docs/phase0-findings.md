@@ -14,13 +14,12 @@ Checked 2026-10-23. Items marked **TODO (Toby)** need a login or the production 
 
 Newer IDs exist (`gemini-3.6/3.7/3.8-flash`, `gemini-3.5-flash-lite`). Not switching: the rule is to change only dead strings.
 
-**TODO (Toby):** copy the per-model RPM / RPD from https://aistudio.google.com/rate-limit into this table.
+Reported by Toby from AI Studio (2026-10-23): **30 RPM and 1,000 RPD**, with 0 used. The figures weren't broken down per model, so treat them as the ceiling for every Gemini model in use.
 
-| Model | RPM | RPD | TPM |
-|---|---|---|---|
-| gemini-3.5-flash | | | |
-| gemini-3.1-flash-lite | | | |
-| gemini-2.5-flash | | | |
+What that allows:
+- Ingestion is paced at one doc every 8 s (`INGEST_PACING_SECONDS`), about 7.5 docs/min; each doc makes 1–3 Gemini calls (parse, OCR batches, tagging). That stays under 30 RPM.
+- Re-ingesting all 30 notes costs well under 1,000 RPD.
+- A 40-question eval with a Gemini LLM judge is 40 calls. Pace it at 2 s or more apart and it costs 4% of the daily quota.
 
 ## 2. scikit-learn / TSNE
 
@@ -40,7 +39,7 @@ docker compose exec backend python -c "from sklearn.manifold import TSNE; print(
 
 ## 4. LangSmith
 
-The free Developer plan includes 5,000 base traces/month (as of the last published pricing). Tracing is currently `langsmith_tracing="false"` by default. **TODO (Toby):** confirm the cap and current usage at smith.langchain.com → Settings → Usage.
+A LangSmith project ("RAG Portfolio") exists but has never received a trace: `langsmith_tracing` defaults to `"false"` and no tracing is wired up. Usage is therefore 0 against the free plan's monthly cap (5,000 base traces at the last published pricing). No sampling is needed unless tracing is turned on later.
 
 ## 5. Geist in `next/font/google`
 
@@ -50,17 +49,20 @@ The free Developer plan includes 5,000 base traces/month (as of the last publish
 
 ## 6. Corpus size
 
-**TODO (Toby):** run on the VM:
+Production database on 2026-10-23:
 
-```
-docker compose -f docker-compose.prod.yml exec postgres psql -U portfolio -d portfolio -c "
-select count(*) docs, sum(chunk_count) chunks, round(avg(chunk_count),1) chunks_per_doc,
-       (select count(*) from folders) folders,
-       (select count(*) from folders where is_course) courses
-from documents;"
-```
+| docs | chunks | chunks/doc | largest doc | parse: multimodal / fallback | folders (courses) | skills | logged queries |
+|---|---|---|---|---|---|---|---|
+| 30 | 2,956 | 98.5 | 266 | 19 / 10 | 32 (28) | 210 | 3 |
 
-Average chunk characters needs the Phase 2 `chunks` table (or a Zilliz query); `CHUNK_SIZE = 256` × 4 caps a chunk at about 1,024 chars plus its heading.
+What this means for later phases:
+- **Knowledge map (Phase 6):** 2,956 points with id, x/y, doc and module index come to roughly 150–200 KB raw, about 40–60 KB gzipped, inside the < 200 KB budget. t-SNE on 2,956 × 384 is a seconds-scale batch job.
+- **Postgres chunk mirror (Phase 2):** 2,956 rows × (≤ ~1 KB text + 384-dim vector ≈ 1.5 KB) is about 8 MB plus indexes, small next to the 768 MB container limit.
+- **OCR experiment (Phase 9):** 10 of 30 docs are `fallback`, so text inside their images is missing. That's a larger share than expected, which makes Phase 9 more worthwhile.
+
+`sklearn.manifold.TSNE` imports in the production backend container.
+
+A `pg_dump` of production is restored into the local compose Postgres (`portfolio.dump` at the repo root, git-ignored).
 
 ## Baseline eval
 

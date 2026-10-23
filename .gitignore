@@ -235,3 +235,6 @@ out/
 # Google service account key - NEVER commit this
 *service-account*.json
 *credentials*.json
+
+# Local copies of the production database
+*.dump

@@ -2,13 +2,9 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 
-interface Props {
-  src: string;
-  alt: string;
-  fallbackLabel?: string;
-}
-
-export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
+// Shows its children inline; clicking opens a full-screen view with wheel /
+// pinch zoom and drag to pan. The children render in both places.
+export default function PinchZoom({ label, children }: { label: string; children: React.ReactNode }) {
   const [zoomed, setZoomed] = useState(false);
   const [scale, setScale]   = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -137,9 +133,12 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
 
   return (
     <>
-      <div
+      <button
+        type="button"
         onClick={() => setZoomed(true)}
+        aria-label={`${label}: open zoomable view`}
         style={{
+          display: "block", width: "100%", padding: 0, font: "inherit", color: "inherit", textAlign: "left",
           border: "1px solid var(--border)",
           borderRadius: "var(--radius-lg)",
           overflow: "hidden",
@@ -149,21 +148,7 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
           minHeight: 200,
         }}
       >
-        <img
-          src={src}
-          alt={alt}
-          style={{ width: "100%", height: "auto", display: "block" }}
-          onError={e => {
-            const el = e.target as HTMLImageElement;
-            el.style.display = "none";
-            el.parentElement!.innerHTML = `
-              <div style="display:flex;align-items:center;justify-content:center;
-                height:200px;color:var(--fg-subtle);font-size:13px;
-                padding:24px;text-align:center">
-                ${fallbackLabel ?? "Image not found"}
-              </div>`;
-          }}
-        />
+        <div style={{ padding: 12 }}>{children}</div>
         <div style={{
           position: "absolute", bottom: 10, right: 10,
           background: "rgba(0,0,0,0.45)", color: "#fff",
@@ -172,18 +157,21 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
         }}>
           click to zoom
         </div>
-      </div>
+      </button>
 
       {zoomed && createPortal(
         <div
           ref={overlayRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={label}
           onMouseDown={onMouseDown}
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
           style={{
             position: "fixed", inset: 0,
-            background: "rgba(0,0,0,0.92)",
+            background: "var(--overlay)",
             display: "flex", alignItems: "center", justifyContent: "center",
             zIndex: 100, overflow: "hidden", touchAction: "none",
             cursor: dragStart.current ? "grabbing" : scale > 1 ? "grab" : "default",
@@ -192,6 +180,8 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
         >
           <button
             onClick={closeZoom}
+            aria-label="Close zoomed view"
+            autoFocus
             onMouseDown={e => e.stopPropagation()}
             style={{
               position: "absolute", top: 16, right: 16, zIndex: 101,
@@ -208,26 +198,26 @@ export default function PinchZoomImage({ src, alt, fallbackLabel }: Props) {
           <p style={{
             position: "absolute", bottom: 16, left: "50%",
             transform: "translateX(-50%)",
-            color: "rgba(255,255,255,.4)", fontSize: 11,
+            color: "rgba(255,255,255,.85)", fontSize: 11,
             pointerEvents: "none", whiteSpace: "nowrap",
           }}>
             Scroll to zoom · drag to pan · {Math.round(scale * 100)}%
           </p>
 
-          <img
-            src={src}
-            alt={alt}
-            draggable={false}
+          <div
+            className="zoom-fit"
             style={{
-              maxWidth: "92vw", maxHeight: "88vh",
-              objectFit: "contain",
+              width: "92vw", height: "88vh",
+              background: "var(--bg-secondary)", borderRadius: "var(--radius-lg)", padding: 16,
               transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
               transformOrigin: "center center",
               transition: dragStart.current ? "none" : "transform 0.05s linear",
               userSelect: "none",
               pointerEvents: "none",
             }}
-          />
+          >
+            {children}
+          </div>
         </div>,
         document.body
       )}
