@@ -13,7 +13,7 @@ from sqlalchemy import text
 
 from app.cache.redis_client import get_redis
 from app.db.database import AsyncSessionLocal
-from app.revalidate import MAP_KEY
+from app.revalidate import MAP_KEY, refresh_public_pages
 
 _lock = asyncio.Lock()
 
@@ -44,7 +44,7 @@ async def recompute() -> int:
             await db.execute(text("UPDATE chunks SET map_x = :x, map_y = :y WHERE id = :id"),
                              [{"id": cid, "x": float(x), "y": float(y)} for (cid, _), (x, y) in zip(rows, xy)])
             await db.commit()
-        await (await get_redis()).delete(MAP_KEY)
+        await refresh_public_pages()   # drops the cached map and re-renders the homepage snapshot
         print(f"[map] projected {len(rows)} chunks")
         return len(rows)
 
