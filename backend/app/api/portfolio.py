@@ -13,6 +13,7 @@ from app.db.database import get_db
 from app.db.models import Folder, Document, Skill, Resume, document_skills
 from app.revalidate import PUBLIC_STATS_KEY, SKILLS_EVIDENCE_KEY
 from app.sync.google_client import NOTES_PREFIX
+from app.rag.projection import map_payload
 
 router = APIRouter()
 
@@ -192,6 +193,13 @@ async def note(google_doc_id: str, db: AsyncSession = Depends(get_db)):
         "outline": [{"chunk_index": o["chunk_index"], "heading": o["heading"]} for o in outline],
         "related": [{"google_doc_id": g, "display_name": _display_name(t), "module": m} for g, t, m in related],
     }
+
+
+@router.get("/map")
+async def knowledge_map():
+    """Every chunk of every approved note as a point on the knowledge map
+    (see rag/projection). Compact arrays, no note text."""
+    return await map_payload()
 
 
 @router.get("/resume/meta")

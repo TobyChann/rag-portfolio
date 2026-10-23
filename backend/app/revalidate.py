@@ -8,11 +8,12 @@ from app.config import get_settings
 
 PUBLIC_STATS_KEY = "stats:public"
 SKILLS_EVIDENCE_KEY = "skills:evidence"
+MAP_KEY = "map:v1"   # knowledge map payload; module colours follow the folder tree
 
 
 async def refresh_public_pages():
     try:
-        await (await get_redis()).delete(PUBLIC_STATS_KEY, SKILLS_EVIDENCE_KEY)
+        await (await get_redis()).delete(PUBLIC_STATS_KEY, SKILLS_EVIDENCE_KEY, MAP_KEY)
     except Exception as e:
         print(f"[revalidate] couldn't clear public caches: {e}")
 

@@ -7,14 +7,16 @@ import dynamic from "next/dynamic";
 // Owner-only, so visitors never download it.
 const SkillsBoard = dynamic(() => import("@/components/admin/SkillsBoard"), { ssr: false });
 import SkillChips from "@/components/portfolio/SkillChips";
+import KnowledgeMap, { type MapSnapshot } from "@/components/map/KnowledgeMap";
 import { API_BASE as API } from "@/lib/api";
 import type { SkillEvidence } from "@/types";
 
 // The server renders these with the public data; for the owner, the same
 // components hydrate and switch into Curate mode.
-export default function HomeSections({ skills: initialSkills, evidence, portfolio, education }: {
+export default function HomeSections({ skills: initialSkills, evidence, portfolio, education, mapSnapshot }: {
   skills: Record<string, string[]>;
   evidence: SkillEvidence[];
+  mapSnapshot: MapSnapshot;
   portfolio: Portfolio;
   education: React.ReactNode;
 }) {
@@ -79,6 +81,17 @@ export default function HomeSections({ skills: initialSkills, evidence, portfoli
           </div>
         )}
       </section>
+
+      {mapSnapshot.points.length > 0 && (
+        <section style={{ marginBottom: 48 }} aria-labelledby="map-heading">
+          <h2 id="map-heading" className="section-label" style={{ marginBottom: 6 }}>Knowledge map</h2>
+          <p style={{ fontSize: 14, color: "var(--fg-muted)", marginBottom: 14, lineHeight: 1.6 }}>
+            Everything Toby has studied, in one picture: each dot is a passage from the notes, placed so related
+            material sits together. Ask the chat a question and the passages behind the answer light up here.
+          </p>
+          <KnowledgeMap snapshot={mapSnapshot} />
+        </section>
+      )}
 
       <section style={{ marginBottom: 48 }} aria-labelledby="modules-heading">
         {education}
