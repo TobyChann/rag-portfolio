@@ -19,6 +19,11 @@ MIGRATIONS: list[tuple[str, list[str]]] = [
         "ALTER TABLE documents RENAME COLUMN course_id TO folder_id",
         "ALTER INDEX IF EXISTS ix_documents_course_id RENAME TO ix_documents_folder_id",
     ]),
+    ("002_queries_rewritten_question", [
+        # The standalone question a follow-up was condensed into (NULL when
+        # the visitor's question already stood alone).
+        "ALTER TABLE queries ADD COLUMN rewritten_question TEXT",
+    ]),
 ]
 
 

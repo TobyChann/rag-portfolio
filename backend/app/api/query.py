@@ -13,13 +13,15 @@ from app.db.database import get_db, AsyncSessionLocal
 from app.db.crud import log_query, update_feedback, create_visitor
 from app.db.models import Visitor, VisitorRole
 from app.cache.rate_limiter import check_rate_limit
-from app.cache.query_cache import set_session, get_session
+from app.cache.query_cache import (set_session, get_session, get_conversation, append_turn,
+                                   clear_conversation)
 from app.api.auth import require_admin
 from app.config import get_settings
 from app.client_ip import client_ip
 import uuid
 
 router = APIRouter()
+settings = get_settings()
 
 
 class OnboardRequest(BaseModel):
@@ -99,7 +101,8 @@ async def query(
     await _validate(req)
 
     try:
-        result = await run_rag_query(req.question)
+        result = await run_rag_query(req.question, await get_conversation(req.session_id))
+        await append_turn(req.session_id, req.question, result["answer"], settings.session_ttl_seconds)
     except Exception as e:
         print(f"[query] RAG pipeline error: {e}")
         if is_transient_llm_error(e):
@@ -118,6 +121,7 @@ async def query(
             chunks_used=result["chunks"],
             response_ms=result["response_ms"],
             cache_hit=result["cache_hit"],
+            rewritten_question=result["rewritten_question"],
         )
     except Exception as e:
         print(f"[query] DB logging error (non-fatal): {e}")
@@ -156,17 +160,20 @@ async def query_stream(
     req: QueryRequest,
     _: None = Depends(check_rate_limit),
 ):
-    """Streaming /query: newline-delimited JSON events (sources, text deltas,
-    then done with the query_id for feedback). Validation errors still return
-    normal HTTP status codes because they're raised before streaming starts."""
+    """Streaming /query: newline-delimited JSON events — sources (with citation
+    numbers), text deltas, then trace, followups and done (with the query_id
+    for feedback). Validation errors still return normal HTTP status codes
+    because they're raised before streaming starts."""
     await _validate(req)
+    history = await get_conversation(req.session_id)
 
     async def events():
         try:
-            async for ev in stream_rag_query(req.question):
+            async for ev in stream_rag_query(req.question, history):
                 if ev["type"] != "done":
                     yield json.dumps(ev) + "\n"
                     continue
+                await append_turn(req.session_id, req.question, ev["answer"], settings.session_ttl_seconds)
                 query_id = None
                 # Own session: the request-scoped one may already be closed by the
                 # time a long stream finishes.
@@ -176,11 +183,15 @@ async def query_stream(
                             db, session_id=req.session_id, question=req.question,
                             answer=ev["answer"], chunks_used=ev["chunks"],
                             response_ms=ev["response_ms"], cache_hit=ev["cache_hit"],
+                            rewritten_question=ev["rewritten_question"],
                         )
                         await db.commit()
                         query_id = str(logged.id)
                 except Exception as e:
                     print(f"[query] DB logging error (non-fatal): {e}")
+                yield json.dumps({"type": "trace", **ev["trace"]}) + "\n"
+                if ev["followups"]:
+                    yield json.dumps({"type": "followups", "questions": ev["followups"]}) + "\n"
                 yield json.dumps({"type": "done", "query_id": query_id,
                                   "cache_hit": ev["cache_hit"],
                                   "response_ms": ev["response_ms"]}) + "\n"
@@ -193,6 +204,13 @@ async def query_stream(
     # X-Accel-Buffering stops reverse proxies (nginx-style) from holding the stream.
     return StreamingResponse(events(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.delete("/conversation")
+async def delete_conversation(session_id: str):
+    """"New chat": forget the turns follow-ups are resolved against."""
+    await clear_conversation(session_id)
+    return {"ok": True}
 
 
 @router.get("/meta")

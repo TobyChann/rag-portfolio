@@ -40,7 +40,8 @@ const personLd = {
   url: SITE_URL,
   description: PROFILE.tagline,
   alumniOf: { "@type": "CollegeOrUniversity", name: EDUCATION.school },
-  sameAs: [PROFILE.github],
+  email: `mailto:${PROFILE.email}`,
+  sameAs: [PROFILE.github, PROFILE.linkedin],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

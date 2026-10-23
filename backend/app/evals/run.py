@@ -13,6 +13,7 @@ result is stored as an eval_runs row unless --no-save."""
 import argparse
 import asyncio
 import json
+import re
 import statistics
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ from app.db.database import AsyncSessionLocal
 from app.db.models import EvalRun
 from app.llm import gemini_client
 from app.rag import pipeline
+from app.rag.pipeline import condense
 from app.rag.embedder import embed_query
 from app.rag.overview import get_overview
 from app.rag.retriever import search
@@ -30,6 +32,10 @@ from app.sync.resume import get_resume_text
 GOLDEN = Path(__file__).resolve().parents[2] / "evals" / "golden.jsonl"
 MODES = ("dense", "pg_dense", "hybrid", "pg_hybrid")
 JUDGE_PACING_SECONDS = 2.5
+# "negative" questions ask about things the notes don't cover; the answer
+# should say so instead of improvising.
+ABSTAIN = re.compile(r"(couldn't|could not|can't|cannot|don't|doesn't|does not|didn't|no)\s+"
+                     r"(find|information|mention|cover|indicate|specific|record|evidence|details)", re.I)
 
 JUDGE_PROMPT = """Rate how well the ANSWER is supported by the CONTEXT, from 1 to 5:
 5 = every claim is in the context; 3 = mostly supported, minor unsupported details;
@@ -69,28 +75,33 @@ async def _judge(context: str, answer: str) -> int | None:
     return None
 
 
-async def eval_mode(mode: str, golden: list[dict], vectors: dict[str, list[float]], top_k: int,
-                    answers: bool, judge: bool) -> dict:
+async def eval_mode(mode: str, golden: list[dict], standalone: dict[str, str], vectors: dict[str, list[float]],
+                    top_k: int, answers: bool, judge: bool) -> dict:
     await search("warm up", vectors[golden[0]["id"]], mode, top_k)
     rows = []
     for g in golden:
+        q = standalone[g["id"]]
         t0 = time.perf_counter()
-        hits = await search(g["q"], vectors[g["id"]], mode, top_k)
+        hits = await search(q, vectors[g["id"]], mode, top_k)
         ms = (time.perf_counter() - t0) * 1000
         docs = list(dict.fromkeys(h["doc_id"] for h in hits))
         expect = set(g["expect_docs"])
         row = {"id": g["id"], "kind": g["kind"], "ms": round(ms, 1), "docs": docs[:5],
                "chunks": [{"id": h["id"], "dense_rank": h.get("dense_rank"),
                            "lexical_rank": h.get("lexical_rank")} for h in hits]}
+        if q != g["q"]:
+            row["rewritten"] = q
         if expect:
             rank = next((i + 1 for i, d in enumerate(docs) if d in expect), None)
             row.update(recall=len(expect & set(docs[:5])) / len(expect),
                        rr=1 / rank if rank else 0.0, hit1=float(bool(docs) and docs[0] in expect))
         if answers:
-            text, context = await _answer(g["q"], hits)
+            text, context = await _answer(q, hits)
             row["answer"] = text
             if g["must_mention"]:
                 row["mention"] = sum(m.lower() in text.lower() for m in g["must_mention"]) / len(g["must_mention"])
+            if g["kind"] == "negative":
+                row["abstained"] = float(bool(ABSTAIN.search(text)))
             if judge:
                 row["faithfulness"] = await _judge(context, text)
                 await asyncio.sleep(JUDGE_PACING_SECONDS)
@@ -106,6 +117,9 @@ async def eval_mode(mode: str, golden: list[dict], vectors: dict[str, list[float
         mentions = [r["mention"] for r in subset if "mention" in r]
         if mentions:
             out["mention_rate"] = round(statistics.mean(mentions), 3)
+        abstains = [r["abstained"] for r in subset if "abstained" in r]
+        if abstains:
+            out["abstain_rate"] = round(statistics.mean(abstains), 3)
         faith = [r["faithfulness"] for r in subset if r.get("faithfulness")]
         if faith:
             out["faithfulness"] = round(statistics.mean(faith), 2)
@@ -123,10 +137,15 @@ async def eval_mode(mode: str, golden: list[dict], vectors: dict[str, list[float
 async def run_eval(modes: list[str], top_k: int = 5, answers: bool = False, judge: bool = False,
                    save: bool = True) -> list[dict]:
     golden = load_golden()
-    vectors = {g["id"]: await embed_query(g["q"]) for g in golden}
+    by_id = {g["id"]: g for g in golden}
+    # Follow-ups are condensed against their base question, as the chat does
+    # with a live conversation (the base answer isn't needed to resolve "that").
+    standalone = {g["id"]: (await condense(g["q"], [{"q": by_id[g["followup_of"]]["q"], "a": ""}])
+                            if g.get("followup_of") else g["q"]) for g in golden}
+    vectors = {g["id"]: await embed_query(standalone[g["id"]]) for g in golden}
     results = []
     for mode in modes:
-        result = await eval_mode(mode, golden, vectors, top_k, answers, judge)
+        result = await eval_mode(mode, golden, standalone, vectors, top_k, answers, judge)
         if save:
             async with AsyncSessionLocal() as db:
                 run = EvalRun(**result)
@@ -156,6 +175,7 @@ def main():
         print(f"\n== {r['config']['mode']}  recall@5={m.get('recall_at_5')}  MRR={m.get('mrr')}  "
               f"hit@1={m.get('hit_at_1')}  p50={m['p50_ms']}ms  p95={m['p95_ms']}ms"
               + (f"  mention={m['mention_rate']}" if "mention_rate" in m else "")
+              + (f"  abstain={m['abstain_rate']}" if "abstain_rate" in m else "")
               + (f"  faithfulness={m['faithfulness']}" if "faithfulness" in m else ""))
         for kind, km in m["by_kind"].items():
             print(f"   {kind:14} n={km['n']:2}  recall@5={km.get('recall_at_5')}  MRR={km.get('mrr')}")

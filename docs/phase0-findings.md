@@ -93,7 +93,16 @@ What this says:
 The same 384-d vectors are in both. Postgres was filled from Zilliz by `app.sync.backfill_chunks`, so the comparison is like for like.
 
 - **Quality: a tie.** MRR 0.981 both; recall@5 0.971 vs 0.962. The difference is one second-note hit.
-- **Latency: about 50× faster from here.** 5 ms vs 257 ms at p50. Postgres is local and Zilliz is a network round trip, and the same holds on the VM (Postgres in the same compose project, Zilliz in the cloud). VM numbers are to be measured after this ships (TODO).
+- **Latency: about 85× faster on the production VM** (measured 2026-10-23 after deploy):
+
+  | Mode | p50 | p95 |
+  |---|---|---|
+  | `dense` (Zilliz) | 179 ms | 181 ms |
+  | `pg_dense` | 2.1 ms | 2.5 ms |
+  | `hybrid` | 183 ms | 188 ms |
+  | `pg_hybrid` | 11.7 ms | 18.3 ms |
+
+  Quality on the VM matched the local run exactly. Zilliz's time is almost all network round trip from the VM to Zilliz Cloud; Postgres runs in the same compose project.
 - **Operations: pgvector is simpler.** One database, vectors included in the nightly `pg_dump`, no idle-suspension keep-alive. Postgres grows by about 18 MB, and the 768 MB limit has room.
 - **Case for keeping Zilliz:** it's named on the resume, and "benchmarked both, chose X with numbers" works either way. Zilliz also scales further, which doesn't matter at 3k chunks.
 

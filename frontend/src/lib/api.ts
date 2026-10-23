@@ -1,3 +1,5 @@
+import type { Source, Citation, Trace } from "@/types";
+
 // Single source for the backend base URL; components import it from here.
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -35,8 +37,10 @@ export async function updateVisitor(sessionId: string, fields: { role?: string; 
 }
 
 export type QueryEvent =
-  | { type: "sources"; sources: { google_doc_id: string; title: string }[] }
+  | { type: "sources"; sources: Source[]; citations?: Citation[] }
   | { type: "delta"; text: string }
+  | ({ type: "trace" } & Trace)
+  | { type: "followups"; questions: string[] }
   | { type: "done"; query_id: string | null; cache_hit: string | null; response_ms: number }
   | { type: "error"; detail: string };
 
@@ -70,6 +74,10 @@ export async function streamQuery(question: string, sessionId: string,
       if (line) onEvent(JSON.parse(line) as QueryEvent);
     }
   }
+}
+
+export async function clearConversation(sessionId: string) {
+  await fetch(`${API_BASE}/conversation?session_id=${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 }
 
 export async function sendFeedback(queryId: string, feedback: 1 | -1) {

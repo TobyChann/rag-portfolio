@@ -14,16 +14,17 @@ const ORDER = ["extract", "load", "transform", "frontend", "insights", "db_layer
 export default async function Image() {
   const skills = await serverFetch<Record<string, string[]>>("/skills", {});
   const top = ORDER.flatMap(k => (skills[k] ?? []).slice(0, 2)).slice(0, 6);
+  const bg = await fetch(new URL("../../public/bg/blob-light.svg", import.meta.url)).then(r => r.text());
 
   return new ImageResponse(
     (
       <div style={{
         width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "center",
-        padding: "72px 80px", color: "#111111",
-        // TODO asset: Haikei SVG background (claude/PLAN_V2.md §3.4); gradient placeholder until then.
-        backgroundColor: "#FFFFFF",
-        backgroundImage: "radial-gradient(circle at 10% 20%, #FDE68A 0%, rgba(253,230,138,0) 45%), radial-gradient(circle at 95% 0%, #FEF3C7 0%, rgba(254,243,199,0) 40%)",
+        padding: "72px 80px", color: "#111111", backgroundColor: "#FFFFFF", position: "relative",
       }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`data:image/svg+xml;base64,${btoa(bg)}`} width={1200} height={630} alt=""
+             style={{ position: "absolute", top: 0, left: 0, width: 1200, height: 630 }} />
         <div style={{ display: "flex", fontSize: 76, fontWeight: 700, letterSpacing: -2 }}>
           {PROFILE.name}<span style={{ color: "#D4A017" }}>.</span>
         </div>

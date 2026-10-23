@@ -35,6 +35,29 @@ async def clear_answer_cache() -> int:
     return len(keys)
 
 
+# Recent turns per chat session, so follow-ups can be condensed. Answers are
+# clipped: Redis is LRU-capped and this only needs to resolve "that" / "it".
+CONVERSATION_TURNS = 6
+ANSWER_CLIP = 600
+
+
+async def get_conversation(session_id: str) -> list[dict]:
+    r = await get_redis()
+    return [json.loads(t) for t in await r.lrange(f"conv:{session_id}", 0, -1)]
+
+
+async def append_turn(session_id: str, question: str, answer: str, ttl: int = 86400):
+    r = await get_redis()
+    key = f"conv:{session_id}"
+    await r.rpush(key, json.dumps({"q": question, "a": answer[:ANSWER_CLIP]}))
+    await r.ltrim(key, -CONVERSATION_TURNS, -1)
+    await r.expire(key, ttl)
+
+
+async def clear_conversation(session_id: str):
+    await (await get_redis()).delete(f"conv:{session_id}")
+
+
 async def set_session(session_id: str, data: dict, ttl: int = 86400):
     r = await get_redis()
     await r.setex(f"session:{session_id}", ttl, json.dumps(data))
