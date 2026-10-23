@@ -3,13 +3,12 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { nanoid } from "nanoid";
-import { API_BASE as API, onboard, streamQuery, sendFeedback, updateVisitor, clearConversation, SessionExpired } from "@/lib/api";
+import { API_BASE as API, SESSION_KEY, ensureSession as startSession, readStored as read, writeStored as store,
+         streamQuery, sendFeedback, updateVisitor, clearConversation, SessionExpired } from "@/lib/api";
 import { Message, Trace } from "@/types";
-import { REF_KEY } from "./Chatbot";
 
 interface DocInfo { name: string; summary: string; skills: string[]; course: string; }
 
-const SESSION_KEY = "portfolio_session";
 const PROFILED_KEY = "portfolio_profiled";
 const MAX_STORED = 50;
 
@@ -29,13 +28,6 @@ const ROLES = [
 ];
 
 const INDUSTRIES = ["Tech", "Finance", "Government", "Healthcare", "Other"];
-
-function store(key: string, value: string | null) {
-  try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* private mode */ }
-}
-function read(key: string) {
-  try { return localStorage.getItem(key); } catch { return null; }
-}
 
 // The model cites note excerpts as [n]; turning those into #cite-n links lets
 // the Markdown renderer hand them to a button instead of printing brackets.
@@ -109,14 +101,9 @@ export default function ChatPanel({ ask, onClose }: {
 
   // The session is created silently: no questions before the first answer.
   const ensureSession = useCallback(async (fresh = false) => {
-    if (!fresh) {
-      const stored = read(SESSION_KEY);
-      if (stored) return stored;
-    }
-    const { session_id } = await onboard(read(REF_KEY) ?? "");
-    store(SESSION_KEY, session_id);
-    setSessionId(session_id);
-    return session_id;
+    const sid = await startSession(fresh);
+    setSessionId(sid);
+    return sid;
   }, []);
 
   useEffect(() => {

@@ -73,6 +73,7 @@ export default function NavBar() {
   });
 
   const NAV_LINKS = [
+    { href: "/match", label: "Match" },
     { href: "/stack", label: "Stack" },
     ...(isAdmin ? [
       { href: "/planning", label: "Planning" },
@@ -93,7 +94,8 @@ export default function NavBar() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
           {NAV_LINKS.map(l => (
-            <Link key={l.href} href={l.href} style={linkStyle(path === l.href)} aria-current={path === l.href ? "page" : undefined}>
+            <Link key={l.href} href={l.href} style={linkStyle(path === l.href || path.startsWith(`${l.href}/`))}
+                  aria-current={path === l.href ? "page" : undefined}>
               {l.label}
             </Link>
           ))}

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     # visitor's IP; see app/client_ip.py. Empty = never trust forwarded IPs.
     proxy_secret: str = ""
     rate_limit_per_hour: int = 20
+    match_rate_limit_per_hour: int = 3
     session_ttl_seconds: int = 86400
 
     # On-demand ISR: the frontend's /revalidate route and its shared secret.

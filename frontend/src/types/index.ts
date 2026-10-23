@@ -27,6 +27,42 @@ export interface Trace {
   tokens_out: number | null;
 }
 
+export type Verdict = "strong" | "partial" | "gap";
+
+export interface MatchRequirement {
+  id: string;
+  text: string;
+  kind: "tool" | "technique" | "domain" | "soft";
+  must_have: boolean;
+}
+
+export type MatchEvidence =
+  | { kind: "note"; chunk_id: string; google_doc_id: string; title: string; heading: string }
+  | { kind: "resume" }
+  | { kind: "skill"; name: string }
+  | { kind: "module"; name: string };
+
+export interface MatchRow extends MatchRequirement {
+  verdict: Verdict;
+  rationale: string;
+  evidence: MatchEvidence[];
+}
+
+export interface MatchSummary {
+  counts: Record<Verdict, number>;
+  fits: string;
+  grow: string;
+}
+
+export interface MatchResult {
+  id?: string;
+  company_guess: string | null;
+  role_title: string | null;
+  requirements: MatchRequirement[];
+  rows: MatchRow[];
+  summary?: MatchSummary;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";

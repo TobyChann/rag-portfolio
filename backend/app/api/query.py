@@ -34,6 +34,8 @@ class VisitorUpdate(BaseModel):
     session_id: str
     role: Optional[VisitorRole] = None
     industry: Optional[str] = Field(default=None, max_length=50)
+    # Set from a JD match ("Ask a follow-up about this role"); "" clears it.
+    role_context: Optional[str] = Field(default=None, max_length=1500)
 
 
 class QueryRequest(BaseModel):
@@ -87,6 +89,8 @@ async def update_visitor(req: VisitorUpdate, db: AsyncSession = Depends(get_db))
         session["industry"] = req.industry
         if visitor:
             visitor.industry = req.industry
+    if req.role_context is not None:
+        session["role_context"] = req.role_context.strip() or None
     await set_session(req.session_id, session)
     return {"ok": True}
 
@@ -98,10 +102,11 @@ async def query(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(check_rate_limit),
 ):
-    await _validate(req)
+    session = await _validate(req)
 
     try:
-        result = await run_rag_query(req.question, await get_conversation(req.session_id))
+        result = await run_rag_query(req.question, await get_conversation(req.session_id),
+                                     session.get("role_context"))
         await append_turn(req.session_id, req.question, result["answer"], settings.session_ttl_seconds)
     except Exception as e:
         print(f"[query] RAG pipeline error: {e}")
@@ -143,16 +148,18 @@ async def query(
     }
 
 
-async def _validate(req: QueryRequest):
+async def _validate(req: QueryRequest) -> dict:
     if not req.question or not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     if len(req.question) > 500:
         raise HTTPException(status_code=400, detail="Question too long (max 500 chars)")
-    if not await get_session(req.session_id):
+    session = await get_session(req.session_id)
+    if not session:
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired session. Please reopen the chat."
         )
+    return session
 
 
 @router.post("/query/stream")
@@ -164,12 +171,12 @@ async def query_stream(
     numbers), text deltas, then trace, followups and done (with the query_id
     for feedback). Validation errors still return normal HTTP status codes
     because they're raised before streaming starts."""
-    await _validate(req)
+    session = await _validate(req)
     history = await get_conversation(req.session_id)
 
     async def events():
         try:
-            async for ev in stream_rag_query(req.question, history):
+            async for ev in stream_rag_query(req.question, history, session.get("role_context")):
                 if ev["type"] != "done":
                     yield json.dumps(ev) + "\n"
                     continue

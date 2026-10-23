@@ -209,6 +209,21 @@ class Chunk(Base):
     )
 
 
+class Match(Base):
+    """One JD-match result, shareable at /match/{id}. Identical JDs (after
+    normalising whitespace and case) reuse the stored result via jd_hash."""
+    __tablename__ = "matches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    jd_hash = Column(String, nullable=False, index=True)
+    jd_excerpt = Column(Text, nullable=False)
+    company_guess = Column(String, nullable=True)
+    ref = Column(String, nullable=True)
+    session_id = Column(String, nullable=True, index=True)
+    result = Column(JSON, nullable=False)
+
+
 class EvalRun(Base):
     """One run of the retrieval / answer eval over evals/golden.jsonl."""
     __tablename__ = "eval_runs"
