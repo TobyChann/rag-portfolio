@@ -26,6 +26,7 @@ from app.db.database import AsyncSessionLocal
 from app.db.models import Document, Skill
 from app.config import get_settings
 from app.llm import gemini_client, is_transient_llm_error
+from app.revalidate import refresh_public_pages
 
 settings = get_settings()
 
@@ -475,6 +476,8 @@ async def _sync_locked() -> dict:
                 await db.commit()
         ingested.append(f["name"])
 
+    if ingested or added:
+        await refresh_public_pages()
     print(f"[sync] {len(ingested)} re-ingested, {len(added)} added, {len(failed)} failed, "
           f"{skipped} unchanged, {len(new_files)} new (not ingested)")
     return {"ingested": ingested, "added": added, "failed": failed,

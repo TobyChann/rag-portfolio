@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     rate_limit_per_hour: int = 20
     session_ttl_seconds: int = 86400
 
+    # On-demand ISR: the frontend's /revalidate route and its shared secret.
+    # Empty = pages just refresh on their own revalidate window.
+    frontend_revalidate_url: str = ""
+    revalidate_secret: str = ""
+
     class Config:
         env_file = ".env"
 

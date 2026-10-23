@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Chat, ChatMessage, ProfileNote, Skill
-from app.api.admin import require_admin
+from app.api.auth import require_admin
 from app.rag.embedder import embed_query
 from app.rag.retriever import retrieve
 from app.config import get_settings

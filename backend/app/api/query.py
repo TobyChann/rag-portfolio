@@ -2,16 +2,19 @@ import json
 
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.pipeline import run_rag_query, stream_rag_query, RAG_MODEL
 from app.llm import is_transient_llm_error
 from app.db.database import get_db, AsyncSessionLocal
 from app.db.crud import log_query, update_feedback, create_visitor
+from app.db.models import Visitor, VisitorRole
 from app.cache.rate_limiter import check_rate_limit
 from app.cache.query_cache import set_session, get_session
-from app.api.admin import require_admin
+from app.api.auth import require_admin
 from app.config import get_settings
 from app.client_ip import client_ip
 import uuid
@@ -20,9 +23,15 @@ router = APIRouter()
 
 
 class OnboardRequest(BaseModel):
-    role: str
-    industry: str
-    referrer: str = ""
+    role: Optional[VisitorRole] = None
+    industry: Optional[str] = Field(default=None, max_length=50)
+    referrer: str = Field(default="", max_length=200)
+
+
+class VisitorUpdate(BaseModel):
+    session_id: str
+    role: Optional[VisitorRole] = None
+    industry: Optional[str] = Field(default=None, max_length=50)
 
 
 class QueryRequest(BaseModel):
@@ -52,11 +61,32 @@ async def onboard(
             user_agent=request.headers.get("user-agent", ""),
             referrer=req.referrer,
         )
-        await set_session(session_id, {"role": req.role, "industry": req.industry})
+        await set_session(session_id, {"role": req.role and req.role.value, "industry": req.industry})
         return {"session_id": session_id}
     except Exception as e:
         print(f"[onboard] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/visitor")
+async def update_visitor(req: VisitorUpdate, db: AsyncSession = Depends(get_db)):
+    """Role / industry are asked after the first answer, not before it; this
+    fills them in on the visitor row and the session."""
+    session = await get_session(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    visitor = (await db.execute(
+        select(Visitor).where(Visitor.session_id == req.session_id))).scalar_one_or_none()
+    if req.role is not None:
+        session["role"] = req.role.value
+        if visitor:
+            visitor.role = req.role
+    if req.industry is not None:
+        session["industry"] = req.industry
+        if visitor:
+            visitor.industry = req.industry
+    await set_session(req.session_id, session)
+    return {"ok": True}
 
 
 @router.post("/query")
