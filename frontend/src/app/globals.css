@@ -231,6 +231,7 @@ kbd {
   border-bottom: 1px solid var(--border);
   margin-bottom: 24px;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .tab-item {
@@ -469,3 +470,48 @@ kbd {
 @media (max-width: 639px) {
   .nav-kbd { display: none; }
 }
+
+/* ─── C4 diagrams (/stack) ───────────────────────────────── */
+:root {
+  --c4-person: #1D4ED8;   --c4-person-fg: #FFFFFF;
+  --c4-core: #DAE8FC;     --c4-core-line: #6C8EBF;
+  --c4-component: #D5E8D4; --c4-component-line: #82B366;
+  --c4-api: #E1D5E7;      --c4-api-line: #9673A6;
+  --c4-sync: #FFE6CC;     --c4-sync-line: #D79B00;
+  --c4-external: #FFF2CC; --c4-external-line: #D6B656;
+  --c4-db: #F8CECC;       --c4-db-line: #B85450;
+  --c4-edge: #4B5563;     --c4-boundary: #9CA3AF;
+}
+:root[data-theme="dark"] {
+  --c4-person: #3B6FE0;   --c4-person-fg: #FFFFFF;
+  --c4-core: #14243D;     --c4-core-line: #4F78B5;
+  --c4-component: #13291A; --c4-component-line: #4E8A5C;
+  --c4-api: #251A33;      --c4-api-line: #8A6BB0;
+  --c4-sync: #33220C;     --c4-sync-line: #B07A1E;
+  --c4-external: #2E2810; --c4-external-line: #A08A3A;
+  --c4-db: #331616;       --c4-db-line: #B0504C;
+  --c4-edge: #A1A1AA;     --c4-boundary: #52525B;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --c4-person: #3B6FE0;   --c4-person-fg: #FFFFFF;
+    --c4-core: #14243D;     --c4-core-line: #4F78B5;
+    --c4-component: #13291A; --c4-component-line: #4E8A5C;
+    --c4-api: #251A33;      --c4-api-line: #8A6BB0;
+    --c4-sync: #33220C;     --c4-sync-line: #B07A1E;
+    --c4-external: #2E2810; --c4-external-line: #A08A3A;
+    --c4-db: #331616;       --c4-db-line: #B0504C;
+    --c4-edge: #A1A1AA;     --c4-boundary: #52525B;
+  }
+}
+.c4 { width: 100%; height: auto; display: block; font-family: var(--font-sans); }
+.c4 .t { font-size: 14px; font-weight: 700; fill: var(--fg); }
+.c4 .s { font-size: 11px; fill: var(--fg-muted); }
+.c4 .d { font-size: 11.5px; fill: var(--fg); }
+.c4 .person .t, .c4 .person .s, .c4 .person .d { fill: var(--c4-person-fg); }
+.c4 .edge { stroke: var(--c4-edge); stroke-width: 1.4; fill: none; }
+.c4 .edge-label { font-size: 10.5px; fill: var(--fg-muted); }
+.c4 .edge-label-bg { fill: var(--bg-secondary); }
+.c4 .boundary { fill: none; stroke: var(--c4-boundary); stroke-width: 1.4; stroke-dasharray: 7 5; }
+.c4 .boundary-label { font-size: 12px; font-weight: 600; fill: var(--fg-subtle); }
+.zoom-fit .c4 { height: 100%; }
