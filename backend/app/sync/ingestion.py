@@ -28,6 +28,7 @@ from app.db.models import Document, Skill
 from app.config import get_settings
 from app.llm import gemini_client, is_transient_llm_error
 from app.revalidate import refresh_public_pages
+from app.rag.projection import recompute_soon
 
 settings = get_settings()
 
@@ -484,6 +485,7 @@ async def _sync_locked() -> dict:
 
     if ingested or added:
         await refresh_public_pages()
+        recompute_soon()
     print(f"[sync] {len(ingested)} re-ingested, {len(added)} added, {len(failed)} failed, "
           f"{skipped} unchanged, {len(new_files)} new (not ingested)")
     return {"ingested": ingested, "added": added, "failed": failed,

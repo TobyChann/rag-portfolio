@@ -17,6 +17,7 @@ from app.evals.run import run_eval, MODES as EVAL_MODES
 from app.api.auth import ADMIN_COOKIE, is_admin, require_admin
 from app.api.portfolio import doc_dict, folder_dict
 from app.revalidate import refresh_public_pages
+from app.rag.projection import recompute as recompute_map, recompute_soon
 from app.cache.redis_client import get_redis
 from app.cache.query_cache import clear_answer_cache
 from app.sync import resume as resume_mod
@@ -482,6 +483,7 @@ async def _run_batch(docs: List[BatchDoc]):
     _batch_job["status"] = "done"
     _batch_job["current"] = ""
     await refresh_public_pages()
+    recompute_soon()
 
 
 @router.post("/ingest/batch", dependencies=[Depends(require_admin)])
@@ -662,6 +664,15 @@ async def delete_resume(db: AsyncSession = Depends(get_db)):
     await clear_answer_cache()
     await refresh_public_pages()
     return {"exists": False}
+
+
+# ── Knowledge map ─────────────────────────────────────────
+
+@router.post("/map/recompute", dependencies=[Depends(require_admin)])
+async def map_recompute():
+    """Re-project every chunk now (normally runs after ingests and syncs).
+    Waits for the result: a minute or two on the VM."""
+    return {"points": await recompute_map()}
 
 
 # ── Evals (retrieval / answer quality over evals/golden.jsonl) ──

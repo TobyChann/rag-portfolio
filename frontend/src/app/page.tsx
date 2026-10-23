@@ -6,6 +6,7 @@ import AskBox from "@/components/portfolio/AskBox";
 import HomeSections from "@/components/portfolio/HomeSections";
 import type { Portfolio } from "@/components/portfolio/ModulesSection";
 import type { SkillEvidence } from "@/types";
+import type { MapData, MapSnapshot } from "@/components/map/KnowledgeMap";
 
 export const revalidate = 300;
 
@@ -24,13 +25,22 @@ function ago(iso: string | null) {
 }
 
 export default async function HomePage() {
-  const [skills, evidence, portfolio, stats, resume] = await Promise.all([
+  const [skills, evidence, portfolio, stats, resume, map] = await Promise.all([
     serverFetch<Record<string, string[]>>("/skills", {}),
     serverFetch<SkillEvidence[]>("/skills/evidence", []),
     serverFetch<Portfolio>("/portfolio", { folders: [], docs: [] }),
     serverFetch<PublicStats | null>("/stats/public", null),
     serverFetch<{ exists: boolean }>("/resume/meta", { exists: false }),
+    serverFetch<MapData | null>("/map", null),
   ]);
+
+  // ~400 points are plenty for the server-rendered placeholder (and the
+  // no-JavaScript view); the full map loads on the client.
+  const step = map ? Math.max(1, Math.ceil(map.points.length / 400)) : 1;
+  const snapshot: MapSnapshot = {
+    modules: map?.modules.map(m => m.name) ?? [],
+    points: map ? map.points.filter((_, i) => i % step === 0).map(([x, y, d]) => [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000, map.docs[d].module]) : [],
+  };
 
   const proof = [
     { num: EDUCATION.gpa.split(" ")[0], lbl: "cGPA / 4.00" },
@@ -106,7 +116,7 @@ export default async function HomePage() {
         ))}
       </div>
 
-      <HomeSections skills={skills} evidence={evidence} portfolio={portfolio} education={education} />
+      <HomeSections skills={skills} evidence={evidence} portfolio={portfolio} education={education} mapSnapshot={snapshot} />
     </main>
   );
 }

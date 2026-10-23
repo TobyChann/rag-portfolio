@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { API_BASE as API, SESSION_KEY, ensureSession as startSession, readStored as read, writeStored as store,
          streamQuery, sendFeedback, updateVisitor, clearConversation, SessionExpired } from "@/lib/api";
 import { Message, Trace } from "@/types";
+import { MiniMap, TRACE_EVENT } from "@/components/map/KnowledgeMap";
 
 interface DocInfo { name: string; summary: string; skills: string[]; course: string; }
 
@@ -73,6 +74,7 @@ function HowAnswered({ trace }: { trace: Trace }) {
           </tbody>
         </table>
       )}
+      <MiniMap chunkIds={trace.retrieval.map(r => r.chunk_id).filter((c): c is string => !!c)} />
     </details>
   );
 }
@@ -181,7 +183,12 @@ export default function ChatPanel({ ask, onClose }: {
     const run = (sid: string) => streamQuery(q, sid, ev => {
       if (ev.type === "sources") patch(m => ({ ...m, sources: ev.sources, citations: ev.citations }));
       else if (ev.type === "delta") patch(m => ({ ...m, content: m.content + ev.text }));
-      else if (ev.type === "trace") { const { type: _, ...trace } = ev; patch(m => ({ ...m, trace })); }
+      else if (ev.type === "trace") {
+        const { type: _, ...trace } = ev;
+        patch(m => ({ ...m, trace }));
+        window.dispatchEvent(new CustomEvent(TRACE_EVENT, {
+          detail: { chunkIds: trace.retrieval.map(r => r.chunk_id).filter(Boolean) } }));
+      }
       else if (ev.type === "followups") patch(m => ({ ...m, followups: ev.questions }));
       else if (ev.type === "done") patch(m => ({ ...m, queryId: ev.query_id ?? undefined }));
       else if (ev.type === "error") setError(ev.detail);
