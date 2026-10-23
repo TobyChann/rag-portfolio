@@ -3,6 +3,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from pymilvus import MilvusClient, DataType
 from app.config import get_settings
+from app.rag import pg_chunks
 
 settings = get_settings()
 _client = None
@@ -106,14 +107,60 @@ async def retrieve(query_vector: list[float], top_k: int = TOP_K) -> list[dict]:
     )
     return [
         {
+            "id": hit["id"],
             "text": hit["entity"]["text"],
             "doc_title": hit["entity"]["doc_title"],
             "heading": hit["entity"]["heading"],
             "doc_id": hit["entity"]["doc_id"],
+            "chunk_index": hit["entity"]["chunk_index"],
             "score": round(hit["distance"], 3),
         }
         for hit in results[0]
     ]
+
+
+RRF_K = 60
+CANDIDATES = 20
+
+
+async def search(question: str, vector: list[float], mode: str | None = None,
+                 top_k: int = TOP_K) -> list[dict]:
+    """Retrieval as configured by `mode` (default: settings.retrieval_mode):
+      dense      Zilliz ANN only
+      pg_dense   pgvector only (benchmark against Zilliz)
+      hybrid     Zilliz + Postgres full-text, fused by Reciprocal Rank Fusion
+      pg_hybrid  pgvector + full-text, fused the same way
+    Hybrid modes also pull in the top hit's neighbouring chunk under the same
+    heading. Each result carries dense_rank / lexical_rank (1-based or None)."""
+    mode = mode or settings.retrieval_mode
+    if mode == "dense":
+        hits = await retrieve(vector, top_k)
+        return [{**h, "dense_rank": i + 1, "lexical_rank": None} for i, h in enumerate(hits)]
+    if mode == "pg_dense":
+        hits = await pg_chunks.dense_search(vector, top_k)
+        return [{**h, "score": round(h["score"], 3), "dense_rank": i + 1, "lexical_rank": None}
+                for i, h in enumerate(hits)]
+
+    dense_fn = retrieve(vector, CANDIDATES) if mode == "hybrid" else pg_chunks.dense_search(vector, CANDIDATES)
+    dense, lexical = await asyncio.gather(dense_fn, pg_chunks.lexical_search(question, CANDIDATES))
+
+    fused: dict[str, dict] = {}
+    for key, ranked in (("dense_rank", dense), ("lexical_rank", lexical)):
+        for rank, hit in enumerate(ranked, 1):
+            entry = fused.setdefault(hit["id"], {**hit, "score": 0.0, "dense_rank": None, "lexical_rank": None})
+            entry[key] = rank
+            entry["score"] += 1 / (RRF_K + rank)
+    top = sorted(fused.values(), key=lambda h: h["score"], reverse=True)[:top_k]
+    for h in top:
+        h["score"] = round(h["score"], 4)
+
+    if top:
+        have = {h["id"] for h in top}
+        first = top[0]
+        for n in await pg_chunks.neighbours(first["doc_id"], first["chunk_index"], first["heading"]):
+            if n["id"] not in have:
+                top.append({**n, "dense_rank": None, "lexical_rank": None})
+    return top
 
 
 async def keep_alive() -> None:

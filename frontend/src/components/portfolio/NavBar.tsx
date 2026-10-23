@@ -47,7 +47,8 @@ export default function NavBar() {
 
   useEffect(() => {
     fetch(`${API}/admin/me`, { credentials: "include" })
-      .then(r => setIsAdmin(r.ok))
+      .then(r => (r.ok ? r.json() : { authenticated: false }))
+      .then(d => setIsAdmin(!!d.authenticated))
       .catch(() => setIsAdmin(false));
   }, [path]);
 

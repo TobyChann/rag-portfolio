@@ -64,6 +64,37 @@ What this means for later phases:
 
 A `pg_dump` of production is restored into the local compose Postgres (`portfolio.dump` at the repo root, git-ignored).
 
-## Baseline eval
+## Baseline eval (Phase 2)
 
-Recorded here once the Phase 2 harness exists.
+Run 2026-10-23 on a local copy of production (30 notes, 2,956 chunks), against the **draft** golden set `backend/evals/golden.jsonl` (54 questions: 43 topic, 5 acronym, 1 follow-up base + 3 follow-ups, 2 broad). The set isn't approved yet (D7), so treat these as provisional numbers. Each figure comes from `python -m app.evals.run`, and each run is stored in `eval_runs`.
+
+**Retrieval** (top 5 chunks; recall@5 and MRR over expected notes; latency is search only, measured from the laptop):
+
+| Mode | recall@5 | MRR | hit@1 | p50 | p95 |
+|---|---|---|---|---|---|
+| `dense` (Zilliz, current) | 0.962 | 0.981 | 0.962 | 257 ms | 313 ms |
+| `pg_dense` (pgvector HNSW) | 0.971 | 0.981 | 0.962 | 5 ms | 6 ms |
+| `hybrid` (Zilliz + full-text, RRF k=60) | 0.971 | 0.954 | 0.923 | 274 ms | 339 ms |
+| `pg_hybrid` (pgvector + full-text) | 0.952 | 0.939 | 0.885 | 23 ms | 45 ms |
+
+**Answers** (`dense`, gpt-4o-mini; judge = Gemini 3.1 Flash Lite reading the same context the answer model saw): must_mention hit rate **0.887**, faithfulness **4.74 / 5**.
+
+What this says:
+- **Dense retrieval is already near the ceiling** at note level: only 3 of 52 scored questions miss a second expected note, and none miss completely.
+- **Hybrid doesn't ship.** It lowers MRR by about 3 points: lexical matches push a less relevant note into first place. Per the ship rule, `retrieval_mode` stays `dense`. The code path stays in place for the eval.
+- **Rerank not attempted.** The plan's bar is +3 points of recall@5 or MRR, and the baseline (0.962 / 0.981) leaves about 2 points of headroom.
+- **The golden set is too easy to steer future work.** Before approving it, add harder questions: ones that need a specific section, span two notes, or ask about something the notes *don't* cover. Some must_mention terms are also too strict: "amortised" vs the answer's "amortized", and "skip-gram" when the answer says "Word2Vec".
+- **Faithfulness 1/5 on `fin-scorecard` and `data-aws`.** Read those answers; they may state details the notes don't support.
+- **Course codes:** no note text or folder name contains codes like "IS459", so code queries can't match. Adding codes to the folder names would let the modules overview answer them. Course-code normalisation is already in the full-text index for when they appear.
+- **Judge quota:** the judge sends about 10k tokens per call (resume + overview + chunks), which pushes against the free tier's per-minute token limit. A 54-question judged run takes about 15 minutes with backoff.
+
+## Decision D1: Zilliz vs pgvector (dense search)
+
+The same 384-d vectors are in both. Postgres was filled from Zilliz by `app.sync.backfill_chunks`, so the comparison is like for like.
+
+- **Quality: a tie.** MRR 0.981 both; recall@5 0.971 vs 0.962. The difference is one second-note hit.
+- **Latency: about 50× faster from here.** 5 ms vs 257 ms at p50. Postgres is local and Zilliz is a network round trip, and the same holds on the VM (Postgres in the same compose project, Zilliz in the cloud). VM numbers are to be measured after this ships (TODO).
+- **Operations: pgvector is simpler.** One database, vectors included in the nightly `pg_dump`, no idle-suspension keep-alive. Postgres grows by about 18 MB, and the 768 MB limit has room.
+- **Case for keeping Zilliz:** it's named on the resume, and "benchmarked both, chose X with numbers" works either way. Zilliz also scales further, which doesn't matter at 3k chunks.
+
+**Not switched.** Toby decides; flipping is `RETRIEVAL_MODE=pg_dense` in `backend/.env`.

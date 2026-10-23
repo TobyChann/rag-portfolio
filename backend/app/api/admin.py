@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from app.db.database import get_db
 from app.db.crud import get_stats
-from app.db.models import Folder, Skill, ProfileNote, Document, Resume
-from app.api.auth import ADMIN_COOKIE, require_admin
+from app.db.models import Folder, Skill, ProfileNote, Document, Resume, EvalRun
+from app.evals.run import run_eval, MODES as EVAL_MODES
+from app.api.auth import ADMIN_COOKIE, is_admin, require_admin
 from app.api.portfolio import doc_dict, folder_dict
 from app.revalidate import refresh_public_pages
 from app.cache.redis_client import get_redis
@@ -91,8 +92,10 @@ async def logout(request: Request, response: Response):
 
 
 @router.get("/me")
-async def me(token: str = Depends(require_admin)):
-    return {"authenticated": True}
+async def me(admin: bool = Depends(is_admin)):
+    """Always 200, so the logged-out check on every page view doesn't log a
+    401 in visitors' consoles."""
+    return {"authenticated": admin}
 
 
 @router.post("/change-password")
@@ -658,3 +661,60 @@ async def delete_resume(db: AsyncSession = Depends(get_db)):
     await clear_answer_cache()
     await refresh_public_pages()
     return {"exists": False}
+
+
+# ── Evals (retrieval / answer quality over evals/golden.jsonl) ──
+
+class EvalRequest(BaseModel):
+    modes: List[str] = ["dense"]
+    top_k: int = 5
+    answers: bool = False
+    judge: bool = False
+
+
+_eval_job: dict = {"status": "idle"}   # in-memory like _sync_job
+
+
+async def _run_eval_job(req: EvalRequest):
+    global _eval_job
+    try:
+        results = await run_eval(req.modes, req.top_k, req.answers, req.judge)
+        _eval_job = {"status": "done", "run_ids": [r["id"] for r in results]}
+    except Exception as e:
+        print(f"[eval] failed: {e}")
+        _eval_job = {"status": "error", "error": str(e)}
+
+
+@router.post("/evals/run", dependencies=[Depends(require_admin)])
+async def start_eval(req: EvalRequest):
+    """Run the eval in the background; poll GET /evals/status, then GET /evals."""
+    global _eval_job
+    bad = [m for m in req.modes if m not in EVAL_MODES]
+    if bad or not req.modes:
+        raise HTTPException(status_code=400, detail=f"modes must be from {list(EVAL_MODES)}")
+    if _eval_job.get("status") == "running":
+        raise HTTPException(status_code=409, detail="An eval is already running")
+    _eval_job = {"status": "running", "started_at": datetime.utcnow().isoformat() + "Z"}
+    asyncio.create_task(_run_eval_job(req))
+    return {"started": True}
+
+
+@router.get("/evals/status", dependencies=[Depends(require_admin)])
+async def eval_status():
+    return _eval_job
+
+
+@router.get("/evals", dependencies=[Depends(require_admin)])
+async def list_evals(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    runs = (await db.execute(select(EvalRun).order_by(EvalRun.created_at.desc()).limit(limit))).scalars().all()
+    return [{"id": str(r.id), "created_at": r.created_at.isoformat(), "config": r.config,
+             "metrics": r.metrics} for r in runs]
+
+
+@router.get("/evals/{run_id}", dependencies=[Depends(require_admin)])
+async def get_eval(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    r = (await db.execute(select(EvalRun).where(EvalRun.id == run_id))).scalar_one_or_none()
+    if not r:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    return {"id": str(r.id), "created_at": r.created_at.isoformat(), "config": r.config,
+            "metrics": r.metrics, "per_question": r.per_question}
