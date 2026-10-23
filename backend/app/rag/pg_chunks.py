@@ -2,6 +2,8 @@
 """The Postgres side of retrieval: the `chunks` mirror of the Zilliz collection,
 full-text (lexical) search over it, and pgvector search for the Zilliz
 comparison."""
+import re
+
 from sqlalchemy import text
 
 from app.db.database import AsyncSessionLocal
@@ -53,6 +55,24 @@ async def dense_search(vector: list[float], limit: int = 20, doc_id: str | None 
             "ORDER BY c.embedding <=> CAST(:v AS vector) LIMIT :n"),
             {"v": _vec(vector), "n": limit, "g": doc_id})).mappings().all()
     return [dict(r) for r in rows]
+
+
+HIGHLIGHT = ("⟦", "⟧")   # match markers in snippets; the client splits on them, so no HTML travels
+
+
+async def snippets(chunk_ids: list[str], question: str) -> dict[str, str]:
+    """Short excerpts around the question's terms, with matches wrapped in
+    HIGHLIGHT. Chunks the terms don't appear in get their opening words."""
+    if not chunk_ids:
+        return {}
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(text(
+            f"SELECT c.id, ts_headline('english', regexp_replace(c.text, '^#+[^\\n]*\\n+', ''), q, "
+            f"'StartSel={HIGHLIGHT[0]}, StopSel={HIGHLIGHT[1]}, MaxWords=26, MinWords=12, MaxFragments=1, "
+            f"FragmentDelimiter= … ') AS snippet FROM chunks c, {_QUERY} q WHERE c.id = ANY(:ids)"),
+            {"q": question, "ids": chunk_ids})).all()
+    # Snippets are plain text: drop Markdown emphasis, table pipes and code ticks.
+    return {cid: re.sub(r"\s+", " ", re.sub(r"[*`|#>_]+|\$[^$]*\$", " ", s)).strip() for cid, s in rows}
 
 
 async def neighbours(doc_id: str, chunk_index: int, heading: str) -> list[dict]:
