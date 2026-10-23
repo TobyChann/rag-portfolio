@@ -1,5 +1,6 @@
 # backend/app/rag/retriever.py
 import asyncio
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pymilvus import MilvusClient, DataType
 from app.config import get_settings
@@ -93,7 +94,13 @@ async def delete_chunks_for_doc(doc_id: str):
     print(f"[retriever] Deleted old chunks for doc: {doc_id}")
 
 
-async def retrieve(query_vector: list[float], top_k: int = TOP_K) -> list[dict]:
+_DOC_ID = re.compile(r"^[\w-]+$")   # Google Doc ids; anything else never reaches a filter
+
+
+async def retrieve(query_vector: list[float], top_k: int = TOP_K, doc_id: str | None = None) -> list[dict]:
+    """`doc_id` limits the search to one note."""
+    if doc_id and not _DOC_ID.match(doc_id):
+        return []
     client = get_client()
     loop = asyncio.get_event_loop()
     results = await loop.run_in_executor(
@@ -102,6 +109,7 @@ async def retrieve(query_vector: list[float], top_k: int = TOP_K) -> list[dict]:
             collection_name=settings.zilliz_collection,
             data=[query_vector],
             limit=top_k,
+            filter=f'doc_id == "{doc_id}"' if doc_id else "",
             output_fields=["text", "doc_id", "doc_title", "heading", "chunk_index"],
         )
     )
@@ -124,25 +132,27 @@ CANDIDATES = 20
 
 
 async def search(question: str, vector: list[float], mode: str | None = None,
-                 top_k: int = TOP_K) -> list[dict]:
+                 top_k: int = TOP_K, doc_id: str | None = None) -> list[dict]:
     """Retrieval as configured by `mode` (default: settings.retrieval_mode):
       dense      Zilliz ANN only
       pg_dense   pgvector only (benchmark against Zilliz)
       hybrid     Zilliz + Postgres full-text, fused by Reciprocal Rank Fusion
       pg_hybrid  pgvector + full-text, fused the same way
     Hybrid modes also pull in the top hit's neighbouring chunk under the same
-    heading. Each result carries dense_rank / lexical_rank (1-based or None)."""
+    heading. Each result carries dense_rank / lexical_rank (1-based or None).
+    `doc_id` restricts every backend to one note ("Ask about this note")."""
     mode = mode or settings.retrieval_mode
     if mode == "dense":
-        hits = await retrieve(vector, top_k)
+        hits = await retrieve(vector, top_k, doc_id)
         return [{**h, "dense_rank": i + 1, "lexical_rank": None} for i, h in enumerate(hits)]
     if mode == "pg_dense":
-        hits = await pg_chunks.dense_search(vector, top_k)
+        hits = await pg_chunks.dense_search(vector, top_k, doc_id)
         return [{**h, "score": round(h["score"], 3), "dense_rank": i + 1, "lexical_rank": None}
                 for i, h in enumerate(hits)]
 
-    dense_fn = retrieve(vector, CANDIDATES) if mode == "hybrid" else pg_chunks.dense_search(vector, CANDIDATES)
-    dense, lexical = await asyncio.gather(dense_fn, pg_chunks.lexical_search(question, CANDIDATES))
+    dense_fn = (retrieve(vector, CANDIDATES, doc_id) if mode == "hybrid"
+                else pg_chunks.dense_search(vector, CANDIDATES, doc_id))
+    dense, lexical = await asyncio.gather(dense_fn, pg_chunks.lexical_search(question, CANDIDATES, doc_id))
 
     fused: dict[str, dict] = {}
     for key, ranked in (("dense_rank", dense), ("lexical_rank", lexical)):

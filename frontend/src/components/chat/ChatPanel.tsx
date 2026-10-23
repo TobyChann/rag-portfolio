@@ -78,7 +78,7 @@ function HowAnswered({ trace }: { trace: Trace }) {
 }
 
 export default function ChatPanel({ ask, onClose }: {
-  ask: { q: string; n: number } | null;
+  ask: { q: string; n: number; docId?: string } | null;
   onClose: () => void;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -87,7 +87,7 @@ export default function ChatPanel({ ask, onClose }: {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [docMap, setDocMap] = useState<Record<string, DocInfo>>({});
-  const [openSource, setOpenSource] = useState<{ msgId: string; docId: string; heading?: string } | null>(null);
+  const [openSource, setOpenSource] = useState<{ msgId: string; docId: string; heading?: string; chunkIndex?: number | null } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [answerModel, setAnswerModel] = useState("");
   const [profileStep, setProfileStep] = useState<"role" | "industry" | "done">(
@@ -166,7 +166,7 @@ export default function ChatPanel({ ask, onClose }: {
       .catch(() => {});
   }, []);
 
-  const send = useCallback(async (text?: string) => {
+  const send = useCallback(async (text?: string, docId?: string) => {
     const q = (text ?? input).trim();
     if (!q || streamingId) return;
     setInput(""); setError("");
@@ -185,7 +185,7 @@ export default function ChatPanel({ ask, onClose }: {
       else if (ev.type === "followups") patch(m => ({ ...m, followups: ev.questions }));
       else if (ev.type === "done") patch(m => ({ ...m, queryId: ev.query_id ?? undefined }));
       else if (ev.type === "error") setError(ev.detail);
-    }, ctrl.signal);
+    }, ctrl.signal, docId);
 
     try {
       try {
@@ -206,7 +206,7 @@ export default function ChatPanel({ ask, onClose }: {
   useEffect(() => {
     if (ask && ask.n !== handledAsk.current) {
       handledAsk.current = ask.n;
-      send(ask.q);
+      send(ask.q, ask.docId);
     }
   }, [ask, send]);
 
@@ -291,7 +291,7 @@ export default function ChatPanel({ ask, onClose }: {
             const cite = (n: number) => {
               const c = msg.citations?.find(x => x.n === n);
               if (c) setOpenSource(o => (o?.msgId === msg.id && o.docId === c.google_doc_id && o.heading === c.heading
-                ? null : { msgId: msg.id, docId: c.google_doc_id, heading: c.heading }));
+                ? null : { msgId: msg.id, docId: c.google_doc_id, heading: c.heading, chunkIndex: c.chunk_index }));
             };
             return (
               <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
@@ -345,6 +345,10 @@ export default function ChatPanel({ ask, onClose }: {
                               {info.skills.map(sk => <span key={sk} className="tag tag-blue" style={{ fontSize: 10 }}>{sk}</span>)}
                             </div>
                           )}
+                          <a href={`/notes/${openSource.docId}${openSource.heading && openSource.chunkIndex != null ? `#chunk-${openSource.chunkIndex}` : ""}`}
+                             style={{ display: "inline-block", fontSize: 12, marginTop: 8, color: "var(--accent-text)" }}>
+                            Open note →
+                          </a>
                         </div>
                       );
                     })()}

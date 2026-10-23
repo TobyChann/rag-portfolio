@@ -1,19 +1,20 @@
 """The homepage is statically regenerated (ISR) on Vercel. After anything a
-visitor can see changes, drop the cached public stats and ask the frontend to
-rebuild now instead of waiting out its revalidate window."""
+visitor can see changes, drop the cached public stats and skill evidence and
+ask the frontend to rebuild now instead of waiting out its revalidate window."""
 import httpx
 
 from app.cache.redis_client import get_redis
 from app.config import get_settings
 
 PUBLIC_STATS_KEY = "stats:public"
+SKILLS_EVIDENCE_KEY = "skills:evidence"
 
 
 async def refresh_public_pages():
     try:
-        await (await get_redis()).delete(PUBLIC_STATS_KEY)
+        await (await get_redis()).delete(PUBLIC_STATS_KEY, SKILLS_EVIDENCE_KEY)
     except Exception as e:
-        print(f"[revalidate] couldn't clear stats cache: {e}")
+        print(f"[revalidate] couldn't clear public caches: {e}")
 
     s = get_settings()
     if not s.frontend_revalidate_url or not s.revalidate_secret:

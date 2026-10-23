@@ -5,6 +5,7 @@ import { PROFILE, EDUCATION } from "@/lib/profile";
 import AskBox from "@/components/portfolio/AskBox";
 import HomeSections from "@/components/portfolio/HomeSections";
 import type { Portfolio } from "@/components/portfolio/ModulesSection";
+import type { SkillEvidence } from "@/types";
 
 export const revalidate = 300;
 
@@ -23,8 +24,9 @@ function ago(iso: string | null) {
 }
 
 export default async function HomePage() {
-  const [skills, portfolio, stats, resume] = await Promise.all([
+  const [skills, evidence, portfolio, stats, resume] = await Promise.all([
     serverFetch<Record<string, string[]>>("/skills", {}),
+    serverFetch<SkillEvidence[]>("/skills/evidence", []),
     serverFetch<Portfolio>("/portfolio", { folders: [], docs: [] }),
     serverFetch<PublicStats | null>("/stats/public", null),
     serverFetch<{ exists: boolean }>("/resume/meta", { exists: false }),
@@ -104,7 +106,7 @@ export default async function HomePage() {
         ))}
       </div>
 
-      <HomeSections skills={skills} portfolio={portfolio} education={education} />
+      <HomeSections skills={skills} evidence={evidence} portfolio={portfolio} education={education} />
     </main>
   );
 }

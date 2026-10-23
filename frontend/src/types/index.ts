@@ -27,7 +27,26 @@ export interface Trace {
   tokens_out: number | null;
 }
 
-export type Verdict = "strong" | "partial" | "gap";
+export interface NotePage {
+  google_doc_id: string;
+  display_name: string;
+  summary: string;
+  skills: string[];
+  module_path: string[];
+  grade: string;
+  last_synced_at: string | null;
+  outline: { chunk_index: number; heading: string }[];
+  related: { google_doc_id: string; display_name: string; module: string }[];
+}
+
+export interface SkillEvidence {
+  name: string;
+  category: string;
+  count: number;
+  docs: { google_doc_id: string; display_name: string; module: string; grade: string }[];
+}
+
+export type Verdict ="strong" | "partial" | "gap";
 
 export interface MatchRequirement {
   id: string;

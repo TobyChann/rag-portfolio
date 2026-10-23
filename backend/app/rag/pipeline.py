@@ -193,7 +193,8 @@ _GEN_PARAMS = dict(max_tokens=1024, temperature=0.2, **_EXTRA_PARAMS)
 _STREAM_USAGE = {"stream_options": {"include_usage": True}} if _use_openai else {}
 
 
-async def stream_rag_query(question: str, history: list[dict] | None = None, role_context: str | None = None):
+async def stream_rag_query(question: str, history: list[dict] | None = None, role_context: str | None = None,
+                           doc_id: str | None = None):
     """Async generator of answer events, so the UI can render while the model
     writes:
       {"type": "sources", "sources": [...], "citations": [...]}   once, before any text
@@ -203,7 +204,8 @@ async def stream_rag_query(question: str, history: list[dict] | None = None, rol
     `history` is the session's recent turns ({q, a}); a follow-up is condensed
     into a standalone question before retrieval and the cache lookup.
     `role_context` (a job the visitor matched Toby against) shapes the answer,
-    so those answers bypass the shared answer cache.
+    and `doc_id` ("Ask about this note") limits retrieval to one note; either
+    way the answer bypasses the shared answer cache.
     Exceptions propagate; the caller turns them into an error event."""
     start = time.time()
     history = history or []
@@ -223,7 +225,8 @@ async def stream_rag_query(question: str, history: list[dict] | None = None, rol
                           "cache_hit": cache_hit, "response_ms": ms, "model": RAG_MODEL,
                           "mode": settings.retrieval_mode, "tokens_in": tokens_in, "tokens_out": tokens_out}}
 
-    cached = None if role_context else await get_cached_answer(standalone)
+    shared = not (role_context or doc_id)
+    cached = await get_cached_answer(standalone) if shared else None
     if cached:
         meta = cached["chunks"]
         yield {"type": "sources", "sources": _sources(meta, modules), "citations": _citations(meta)}
@@ -231,7 +234,7 @@ async def stream_rag_query(question: str, history: list[dict] | None = None, rol
         yield done(cached["answer"], meta, "redis")
         return
 
-    chunks = await search(standalone, await embed_query(standalone))
+    chunks = await search(standalone, await embed_query(standalone), doc_id=doc_id)
     resume = await get_resume_text()
     overview = await get_overview()
     if not chunks and not resume and not overview:
@@ -259,7 +262,7 @@ async def stream_rag_query(question: str, history: list[dict] | None = None, rol
             yield {"type": "delta", "text": delta}
 
     answer = "".join(parts)
-    if not role_context:
+    if shared:
         await set_cached_answer(standalone, answer, meta)
     yield done(answer, meta, None, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
 

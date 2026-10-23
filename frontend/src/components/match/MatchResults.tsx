@@ -21,7 +21,7 @@ function Chip({ e }: { e: MatchEvidence }) {
     return <a className="ev-chip" href={`${API_BASE}/resume`}>Resume</a>;
   }
   if (e.kind === "note") {
-    return <span className="ev-chip" title={e.heading ? `Section: ${e.heading}` : undefined}>{e.title}</span>;
+    return <a className="ev-chip" href={`/notes/${e.google_doc_id}`} title={e.heading ? `Section: ${e.heading}` : undefined}>{e.title}</a>;
   }
   return <span className="ev-chip ev-chip-plain">{e.kind === "skill" ? "Skill: " : "Course: "}{e.name}</span>;
 }
