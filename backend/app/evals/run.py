@@ -34,7 +34,7 @@ MODES = ("dense", "pg_dense", "hybrid", "pg_hybrid")
 JUDGE_PACING_SECONDS = 2.5
 # "negative" questions ask about things the notes don't cover; the answer
 # should say so instead of improvising.
-ABSTAIN = re.compile(r"(couldn't|could not|can't|cannot|don't|doesn't|does not|didn't|no)\s+"
+ABSTAIN = re.compile(r"(couldn't|could not|can't|cannot|don't|do not|doesn't|does not|didn't|not|no)\s+"
                      r"(find|information|mention|cover|indicate|specific|record|evidence|details)", re.I)
 
 JUDGE_PROMPT = """Rate how well the ANSWER is supported by the CONTEXT, from 1 to 5:

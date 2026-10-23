@@ -304,7 +304,7 @@ kbd {
 /* ─── Hero ───────────────────────────────────────────────── */
 .hero { position: relative; margin-bottom: var(--space-6); }
 .hero::before {
-  content: ""; position: absolute; inset: -48px calc(-1 * var(--gutter)) auto; height: 360px; z-index: -1;
+  content: ""; position: absolute; top: -48px; left: 50%; width: 100vw; margin-left: -50vw; height: 380px; z-index: -1;
   background: var(--hero-bg) center top / cover no-repeat;
   -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
   mask-image: linear-gradient(to bottom, #000 55%, transparent);

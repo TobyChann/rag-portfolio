@@ -107,3 +107,28 @@ The same 384-d vectors are in both. Postgres was filled from Zilliz by `app.sync
 - **Case for keeping Zilliz:** it's named on the resume, and "benchmarked both, chose X with numbers" works either way. Zilliz also scales further, which doesn't matter at 3k chunks.
 
 **Not switched.** Toby decides; flipping is `RETRIEVAL_MODE=pg_dense` in `backend/.env`.
+
+## Phase 3: chat v2 eval (2026-10-23)
+
+The golden set was revised as D7 allowed and now has 72 questions. New additions:
+- 10 **section** questions (one specific part of one note)
+- 4 **cross-note** questions (the answer spans 2–3 notes)
+- 4 **negative** questions (the notes don't cover it; the answer should say so)
+
+Over-strict must_mention terms were relaxed ("amorti" instead of "amortised cost").
+
+| | recall@5 | MRR | follow-ups recall@5 | cross-note recall@5 |
+|---|---|---|---|---|
+| `dense`, Phase 2 (no condensing) | — | — | 0.833 | — |
+| `dense`, Phase 3 (condensed follow-ups) | 0.952 | 0.977 | **1.0** | 0.583 |
+| `pg_dense` | 0.960 | 0.977 | 1.0 | 0.583 |
+| `hybrid` | 0.952 | 0.956 | 0.833 | 0.583 |
+
+Answers (`dense`, with inline citations):
+- **must_mention:** 0.866
+- **Faithfulness:** 4.72 / 5, unchanged from 4.74 before citations.
+- **Negatives:** all 4 answers decline to make something up. The stored abstain_rate of 0.75 is a checker miss ("do not mention" wasn't in the pattern), fixed for future runs.
+
+Still open:
+- **`fin-scorecard`** scored faithfulness 1/5 in both judged runs. The answer describes the scorecard in general terms the excerpts don't support, so the note or the retrieval for it needs a look.
+- **Cross-note questions** are the clear weak spot (recall 0.58). That's the target for any future retrieval work: more candidates per note, per-note diversification, or a reranker.
