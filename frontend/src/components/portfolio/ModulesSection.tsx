@@ -1,6 +1,6 @@
 // frontend/src/components/portfolio/ModulesSection.tsx
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import { API_BASE as API } from "@/lib/api";
 
@@ -15,12 +15,13 @@ interface PortfolioDoc {
   display_name: string;
   summary: string;
   skills: string[];
-  tag_status: string;
-  needs_review: boolean;
-  parse_status: string;
   folder_id: string | null;
   last_synced_at: string | null;
-  chunk_count: number;
+  // Owner-only: the public API omits these.
+  tag_status?: string;
+  needs_review?: boolean;
+  parse_status?: string;
+  chunk_count?: number;
 }
 
 interface FolderNode {
@@ -35,7 +36,7 @@ interface FolderNode {
   grade: string;
 }
 
-interface Portfolio {
+export interface Portfolio {
   folders: FolderNode[];
   docs: PortfolioDoc[];
 }
@@ -194,12 +195,12 @@ function CourseBadges({ f }: { f: FolderNode }) {
   return (
     <>
       {f.is_currently_learning && (
-        <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 20, background: "#DCFCE7", color: "#15803D", border: "1px solid #BBF7D0", whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 20, background: "var(--success-bg)", color: "var(--success)", border: "1px solid var(--success-border)", whiteSpace: "nowrap" }}>
           Learning
         </span>
       )}
       {f.grade && (
-        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: "var(--accent-light)", color: "var(--accent-text)", border: "1px solid #FDE68A", whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: "var(--accent-light)", color: "var(--accent-text)", border: "1px solid var(--accent-border)", whiteSpace: "nowrap" }}>
           {f.grade}
         </span>
       )}
@@ -209,8 +210,8 @@ function CourseBadges({ f }: { f: FolderNode }) {
 
 // ─── Home page section ───────────────────────────────────────
 
-export default function ModulesSection({ editMode }: { editMode: boolean }) {
-  const [data, setData] = useState<Portfolio | null>(null);
+export default function ModulesSection({ initial, editMode }: { initial: Portfolio; editMode: boolean }) {
+  const [data, setData] = useState<Portfolio>(initial);
   const [error, setError] = useState("");
   const [explorerAt, setExplorerAt] = useState<string | null | undefined>(undefined);  // undefined = closed
   const [modalDocId, setModalDocId] = useState<string | null>(null);
@@ -219,7 +220,8 @@ export default function ModulesSection({ editMode }: { editMode: boolean }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/portfolio`);
+      // With the admin cookie this returns untagged notes and curation state too.
+      const res = await fetch(`${API}/portfolio`, { credentials: "include", cache: "no-store" });
       if (!res.ok) throw new Error();
       setData(await res.json());
     } catch {
@@ -227,9 +229,9 @@ export default function ModulesSection({ editMode }: { editMode: boolean }) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (editMode) load(); }, [editMode, load]);
 
-  const tree = useMemo(() => (data ? buildTree(data) : null), [data]);
+  const tree = useMemo(() => buildTree(data), [data]);
 
   async function createTopFolder() {
     const name = newName.trim();
@@ -241,8 +243,7 @@ export default function ModulesSection({ editMode }: { editMode: boolean }) {
     if (res.ok) { setNewName(""); load(); }
   }
 
-  if (error) return <p style={{ fontSize: 13, color: "#DC2626" }}>{error}</p>;
-  if (!data || !tree) return <p style={{ fontSize: 13, color: "var(--fg-muted)" }}>Loading modules…</p>;
+  if (error) return <p style={{ fontSize: 13, color: "var(--danger)" }}>{error}</p>;
 
   const tops = tree.childFolders(null);
   const looseDocs = tree.docsIn(null);
@@ -285,7 +286,7 @@ export default function ModulesSection({ editMode }: { editMode: boolean }) {
           <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>Drag notes and folders onto a folder to move them.</span>
         </div>
       )}
-      {moveErr && <p style={{ fontSize: 12, color: "#DC2626" }}>{moveErr}</p>}
+      {moveErr && <p style={{ fontSize: 12, color: "var(--danger)" }}>{moveErr}</p>}
 
       {explorerAt !== undefined && (
         <FolderExplorer
@@ -381,16 +382,8 @@ function FolderExplorer({ tree, startAt, editMode, docModalOpen, onOpenDoc, onCl
   }
 
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 90,
-      background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(2px)",
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
-    }}>
-      <div onClick={e => e.stopPropagation()} className="fade-in" style={{
-        width: "100%", maxWidth: 860, height: "min(86vh, 760px)", display: "flex", flexDirection: "column",
-        background: "var(--bg)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-md)", overflow: "hidden",
-      }}>
+    <div onClick={onClose} className="modal-backdrop" style={{ zIndex: 90 }}>
+      <div onClick={e => e.stopPropagation()} className="modal explorer fade-in" role="dialog" aria-modal="true" aria-label="Modules explorer">
         {/* Header: breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
           <nav style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4, flex: 1, minWidth: 0, fontSize: 13 }}>
@@ -404,7 +397,7 @@ function FolderExplorer({ tree, startAt, editMode, docModalOpen, onOpenDoc, onCl
               </span>
             ))}
           </nav>
-          <button onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-muted)", fontSize: 22, lineHeight: 1, padding: 0 }}>×</button>
+          <button onClick={onClose} aria-label="Close explorer" className="icon-btn" style={{ fontSize: 22 }}>×</button>
         </div>
 
         {/* Body */}
@@ -441,7 +434,7 @@ function FolderExplorer({ tree, startAt, editMode, docModalOpen, onOpenDoc, onCl
               <button onClick={createFolder} className="btn btn-secondary" style={{ fontSize: 12 }}>+ Add folder</button>
             </div>
           )}
-          {err && <p style={{ fontSize: 12, color: "#DC2626", marginTop: 10 }}>{err}</p>}
+          {err && <p style={{ fontSize: 12, color: "var(--danger)", marginTop: 10 }}>{err}</p>}
         </div>
       </div>
     </div>
@@ -508,7 +501,7 @@ function FolderHeader({ folder, tree, editMode, reload }: {
         <p style={{ fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.7, margin: "0 0 8px" }}>{folder.summary}</p>
       )}
       {!editing && folder.notes && (
-        <div style={{ padding: "6px 10px", background: "var(--accent-light)", borderRadius: "var(--radius-sm)", border: "1px solid #FDE68A", display: "inline-block" }}>
+        <div style={{ padding: "6px 10px", background: "var(--accent-light)", borderRadius: "var(--radius-sm)", border: "1px solid var(--accent-border)", display: "inline-block" }}>
           <p style={{ fontSize: 12, color: "var(--accent-text)", margin: 0 }}>{folder.notes}</p>
         </div>
       )}
@@ -589,18 +582,18 @@ function FolderEditor({ folder, tree, onDone, reload }: {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--fg-muted)" }}>Summary</span>
-        <button onClick={aiSummary} disabled={genBusy} style={{ fontSize: 11, padding: "3px 10px", borderRadius: "var(--radius-sm)", background: "var(--accent-light)", color: "var(--accent-text)", border: "1px solid #FDE68A", cursor: "pointer", opacity: genBusy ? 0.5 : 1 }}>
+        <button onClick={aiSummary} disabled={genBusy} style={{ fontSize: 11, padding: "3px 10px", borderRadius: "var(--radius-sm)", background: "var(--accent-light)", color: "var(--accent-text)", border: "1px solid var(--accent-border)", cursor: "pointer", opacity: genBusy ? 0.5 : 1 }}>
           {genBusy ? "Generating…" : "Summarise from notes"}
         </button>
       </div>
       <textarea value={draft.summary} onChange={e => setDraft(d => ({ ...d, summary: e.target.value }))} rows={3} placeholder="Summary…"
                 style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.6 }} />
       <input value={draft.notes} onChange={e => setDraft(d => ({ ...d, notes: e.target.value }))} placeholder="Employer-facing note (optional)…" style={inputStyle} />
-      {err && <p style={{ fontSize: 12, color: "#DC2626" }}>{err}</p>}
+      {err && <p style={{ fontSize: 12, color: "var(--danger)" }}>{err}</p>}
       <div style={{ display: "flex", gap: 6 }}>
         <button onClick={save} disabled={busy} className="btn btn-primary" style={{ fontSize: 12 }}>{busy ? "Saving…" : "Save"}</button>
         <button onClick={onDone} className="btn btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
-        <button onClick={remove} className="btn btn-ghost" style={{ fontSize: 12, color: "#DC2626", marginLeft: "auto" }}>Delete folder</button>
+        <button onClick={remove} className="btn btn-ghost" style={{ fontSize: 12, color: "var(--danger)", marginLeft: "auto" }}>Delete folder</button>
       </div>
     </div>
   );
@@ -640,7 +633,7 @@ function DocCard({ doc, editMode, onOpen }: {
       </p>
 
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: "auto", paddingTop: 4 }}>
-        <span style={{ fontSize: 10.5, color: (synced.stale && editMode) ? "#B91C1C" : "var(--fg-subtle)", fontWeight: (synced.stale && editMode) ? 600 : 400 }}>
+        <span style={{ fontSize: 10.5, color: (synced.stale && editMode) ? "var(--danger)" : "var(--fg-subtle)", fontWeight: (synced.stale && editMode) ? 600 : 400 }}>
           {synced.text}
         </span>
         {editMode && doc.needs_review && <span className="tag tag-gray" style={{ fontSize: 9 }}>review</span>}
@@ -675,6 +668,13 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
 
   const synced = fmtSynced(doc.last_synced_at);
   const location = tree.path(doc.folder_id).map(f => f.name).join(" / ");
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    return () => opener?.focus?.();
+  }, []);
 
   // Close on Escape; lock body scroll while open.
   useEffect(() => {
@@ -722,51 +722,29 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
   };
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 100,
-        background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(2px)",
-        display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        className="fade-in"
-        style={{
-          width: "100%", maxWidth: 560, maxHeight: "85vh", overflowY: "auto",
-          background: "var(--bg)", border: "1px solid var(--border)",
-          borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-md)",
-          padding: "22px 24px",
-        }}
-      >
+    <div onClick={onClose} className="modal-backdrop">
+      <div onClick={e => e.stopPropagation()} className="modal fade-in" role="dialog" aria-modal="true" aria-labelledby="doc-modal-title">
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, margin: 0 }}>{doc.display_name}</h3>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: "var(--fg-muted)", fontSize: 20, lineHeight: 1, padding: 0 }}
-          >
-            ×
-          </button>
+          <h3 id="doc-modal-title" style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, margin: 0 }}>{doc.display_name}</h3>
+          <button ref={closeRef} onClick={onClose} aria-label="Close note" className="icon-btn" style={{ flexShrink: 0, fontSize: 20 }}>×</button>
         </div>
         {location && <p style={{ fontSize: 11.5, color: "var(--fg-subtle)", margin: "0 0 12px" }}>{location}</p>}
 
         {/* Meta row */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-          <span style={{ ...metaChip, ...((synced.stale && editMode) ? { background: "#FEF2F2", color: "#B91C1C" } : {}) }}>
+          <span style={{ ...metaChip, ...((synced.stale && editMode) ? { background: "var(--danger-bg)", color: "var(--danger)" } : {}) }}>
             {synced.text}
           </span>
-          <span style={metaChip}>{doc.chunk_count} chunk{doc.chunk_count === 1 ? "" : "s"}</span>
-          {doc.parse_status === "fallback" && (
-            <span style={{ ...metaChip, background: "#FEF2F2", color: "#B91C1C" }} title="Multimodal parse failed — text in images is not searchable. Re-ingest to fix.">
+          {editMode && <span style={metaChip}>{doc.chunk_count ?? 0} chunk{doc.chunk_count === 1 ? "" : "s"}</span>}
+          {editMode && doc.parse_status === "fallback" && (
+            <span style={{ ...metaChip, background: "var(--danger-bg)", color: "var(--danger)" }} title="Multimodal parse failed — text in images is not searchable. Re-ingest to fix.">
               image text missing
             </span>
           )}
-          {doc.parse_status === "multimodal" && <span style={metaChip}>multimodal parse</span>}
+          {editMode && doc.parse_status === "multimodal" && <span style={metaChip}>multimodal parse</span>}
           {editMode && doc.needs_review && <span style={metaChip}>changed — review</span>}
           {editMode && (
-            <span style={{ ...metaChip, ...(doc.tag_status === "approved" ? { background: "#DCFCE7", color: "#15803D" } : {}) }}>
+            <span style={{ ...metaChip, ...(doc.tag_status === "approved" ? { background: "var(--success-bg)", color: "var(--success)" } : {}) }}>
               {doc.tag_status === "approved" ? "approved" : "untagged"}
             </span>
           )}
@@ -796,7 +774,7 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
               <p style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--fg-muted)" }}>Summary</p>
               <button
                 onClick={generate} disabled={genBusy}
-                style={{ fontSize: 11, padding: "3px 10px", borderRadius: "var(--radius-sm)", background: "var(--accent-light)", color: "var(--accent-text)", border: "1px solid #FDE68A", cursor: "pointer", opacity: genBusy ? 0.5 : 1 }}
+                style={{ fontSize: 11, padding: "3px 10px", borderRadius: "var(--radius-sm)", background: "var(--accent-light)", color: "var(--accent-text)", border: "1px solid var(--accent-border)", cursor: "pointer", opacity: genBusy ? 0.5 : 1 }}
               >
                 {genBusy ? "Generating…" : "Generate suggestions"}
               </button>
@@ -839,7 +817,7 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
                 {tree.options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
             </div>
-            {err && <p style={{ fontSize: 12, color: "#DC2626" }}>{err}</p>}
+            {err && <p style={{ fontSize: 12, color: "var(--danger)" }}>{err}</p>}
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={save} disabled={busy} className="btn btn-primary" style={{ fontSize: 12 }}>
                 {busy ? "Saving…" : "Save & approve"}

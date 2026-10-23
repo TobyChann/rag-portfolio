@@ -31,7 +31,7 @@ function statusChips(f: DriveFile) {
   if (!f.ingestable) return <span style={{ fontSize: 10, color: "var(--fg-subtle)" }}>—</span>;
   if (!f.ingested) return <span className="tag tag-gray" style={{ fontSize: 9 }}>new</span>;
   const chips = [];
-  if (f.chunk_count === 0) chips.push(<span key="fail" className="tag tag-amber" style={{ fontSize: 9, background: "#FEF2F2", color: "#B91C1C", borderColor: "#FECACA" }}>failed · re-ingest</span>);
+  if (f.chunk_count === 0) chips.push(<span key="fail" className="tag tag-amber" style={{ fontSize: 9, background: "var(--danger-bg)", color: "var(--danger)", borderColor: "var(--danger-border)" }}>failed · re-ingest</span>);
   if (f.changed) chips.push(<span key="chg" className="tag tag-amber" style={{ fontSize: 9 }}>changed · re-ingest</span>);
   if (f.parse_status === "fallback") chips.push(<span key="img" className="tag tag-amber" style={{ fontSize: 9 }} title="Text inside images not captured. Re-ingest to fix.">image text missing</span>);
   if (f.needs_review) chips.push(<span key="rev" className="tag tag-gray" style={{ fontSize: 9 }}>review</span>);
@@ -250,7 +250,7 @@ export default function DrivePicker() {
       )}
 
       {loading && <p style={{ fontSize: 13, color: "var(--fg-muted)" }}>Loading Drive files…</p>}
-      {error && <p style={{ fontSize: 12, color: "#DC2626" }}>{error}</p>}
+      {error && <p style={{ fontSize: 12, color: "var(--danger)" }}>{error}</p>}
       {!loading && !error && shown.length === 0 && (
         <p style={{ fontSize: 13, color: "var(--fg-subtle)" }}>No files match.</p>
       )}

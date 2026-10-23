@@ -36,7 +36,7 @@ docker compose exec backend python -c "from sklearn.manifold import TSNE; print(
 - Local `docker-compose.yml` has **no Postgres service**. `backend/.env` points `DATABASE_URL` at the old Supabase pooler, so local dev reads the pre-migration Supabase data, not what production has.
 - Supabase does support `CREATE EXTENSION vector`, but generated `tsvector` columns, HNSW and the Phase 2 benchmarks should run against the same image as production.
 
-**Recommendation before Phase 2:** add a `postgres: pgvector/pgvector:pg17` service to the local compose file, load it once with `deploy/migrate-from-supabase.sh` (or a `pg_dump` from the VM), and point the local `DATABASE_URL` at it. This changes where local data comes from, so it waits for Toby's OK.
+**Resolved in Phase 1:** the Supabase project no longer accepts connections ("tenant/user … not found"), so local dev had no working database. Local compose now runs `pgvector/pgvector:pg17` and overrides `DATABASE_URL` for the backend. `CREATE EXTENSION vector` works (pgvector 0.8.7). The local DB starts empty; for real data, restore a `pg_dump` from the VM.
 
 ## 4. LangSmith
 

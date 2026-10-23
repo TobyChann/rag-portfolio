@@ -190,7 +190,7 @@ export default function SkillsBoard() {
         />
         <button onClick={addSkill} className="btn btn-primary" style={{ fontSize: 12 }}>Add</button>
       </div>
-      {error && <p style={{ fontSize: 12, color: "#DC2626" }}>{error}</p>}
+      {error && <p style={{ fontSize: 12, color: "var(--danger)" }}>{error}</p>}
 
       {/* Uncategorised pool */}
       {dropZone(null, "Pool — not on the diagram", uncategorised,

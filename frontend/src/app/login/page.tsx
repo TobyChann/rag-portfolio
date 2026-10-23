@@ -71,7 +71,7 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <p style={{ fontSize: 12, color: "#DC2626", background: "#FEF2F2", padding: "8px 12px", borderRadius: "var(--radius-sm)" }}>
+            <p style={{ fontSize: 12, color: "var(--danger)", background: "var(--danger-bg)", padding: "8px 12px", borderRadius: "var(--radius-sm)" }}>
               {error}
             </p>
           )}
