@@ -123,6 +123,7 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         "recent_queries": [
             {
                 "question": q.question,
+                "rewritten_question": q.rewritten_question,
                 "answer": q.answer[:200] + "..." if len(q.answer) > 200 else q.answer,
                 "session_id": q.session_id,
                 "feedback": q.feedback,

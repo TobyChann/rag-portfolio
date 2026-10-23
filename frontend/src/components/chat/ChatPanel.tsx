@@ -3,8 +3,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { nanoid } from "nanoid";
-import { API_BASE as API, onboard, streamQuery, sendFeedback, updateVisitor, SessionExpired } from "@/lib/api";
-import { Message } from "@/types";
+import { API_BASE as API, onboard, streamQuery, sendFeedback, updateVisitor, clearConversation, SessionExpired } from "@/lib/api";
+import { Message, Trace } from "@/types";
 import { REF_KEY } from "./Chatbot";
 
 interface DocInfo { name: string; summary: string; skills: string[]; course: string; }
@@ -37,6 +37,10 @@ function read(key: string) {
   try { return localStorage.getItem(key); } catch { return null; }
 }
 
+// The model cites note excerpts as [n]; turning those into #cite-n links lets
+// the Markdown renderer hand them to a button instead of printing brackets.
+const withCiteLinks = (md: string) => md.replace(/\[(\d{1,2})\](?!\()/g, "[$1](#cite-$1)");
+
 const chip = (active = false): React.CSSProperties => ({
   fontSize: 12, padding: "6px 12px", borderRadius: 20, cursor: "pointer", fontFamily: "inherit",
   border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
@@ -44,6 +48,42 @@ const chip = (active = false): React.CSSProperties => ({
   color: active ? "var(--accent-text)" : "var(--fg-muted)",
   transition: "border-color .15s, color .15s",
 });
+
+function HowAnswered({ trace }: { trace: Trace }) {
+  const max = Math.max(...trace.retrieval.map(r => r.fused_score), 0.0001);
+  const facts = [
+    trace.cache_hit ? "cached answer" : null,
+    `${(trace.response_ms / 1000).toFixed(1)} s`,
+    trace.model,
+    trace.mode && `${trace.mode} retrieval`,
+    trace.tokens_in != null && `${trace.tokens_in} → ${trace.tokens_out} tokens`,
+  ].filter(Boolean);
+  return (
+    <details className="how-answered">
+      <summary>How this was answered</summary>
+      {trace.rewritten_question && (
+        <p style={{ margin: "6px 0" }}>Searched as: <em>&ldquo;{trace.rewritten_question}&rdquo;</em></p>
+      )}
+      <p className="mono" style={{ margin: "6px 0", color: "var(--fg-subtle)" }}>{facts.join(" · ")}</p>
+      {trace.retrieval.length > 0 && (
+        <table>
+          <thead><tr><th>#</th><th>Excerpt</th><th>Score</th><th title="Rank in vector search">Vec</th><th title="Rank in keyword search">Kw</th></tr></thead>
+          <tbody>
+            {trace.retrieval.map((r, i) => (
+              <tr key={r.chunk_id ?? i}>
+                <td className="mono">{i + 1}</td>
+                <td><span className="trace-doc">{r.doc_title.replace(/^Notes_/, "").replace(/_/g, " ")}</span>{r.heading && ` · ${r.heading.replace(/^#+\s*/, "")}`}</td>
+                <td><span className="trace-bar"><span style={{ width: `${(r.fused_score / max) * 100}%` }} /></span><span className="mono">{r.fused_score}</span></td>
+                <td className="mono">{r.dense_rank ?? "–"}</td>
+                <td className="mono">{r.lexical_rank ?? "–"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </details>
+  );
+}
 
 export default function ChatPanel({ ask, onClose }: {
   ask: { q: string; n: number } | null;
@@ -55,7 +95,8 @@ export default function ChatPanel({ ask, onClose }: {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [docMap, setDocMap] = useState<Record<string, DocInfo>>({});
-  const [openSource, setOpenSource] = useState<string | null>(null);
+  const [openSource, setOpenSource] = useState<{ msgId: string; docId: string; heading?: string } | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const [answerModel, setAnswerModel] = useState("");
   const [profileStep, setProfileStep] = useState<"role" | "industry" | "done">(
     () => (read(PROFILED_KEY) ? "done" : "role"));
@@ -105,7 +146,7 @@ export default function ChatPanel({ ask, onClose }: {
       if (e.key === "Escape") { onClose(); return; }
       if (e.key !== "Tab" || !panelRef.current) return;
       const items = panelRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])');
+        'button:not([disabled]), input:not([disabled]), a[href], summary, [tabindex]:not([tabindex="-1"])');
       if (!items.length) return;
       const first = items[0], last = items[items.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -151,8 +192,10 @@ export default function ChatPanel({ ask, onClose }: {
     abortRef.current = ctrl;
 
     const run = (sid: string) => streamQuery(q, sid, ev => {
-      if (ev.type === "sources") patch(m => ({ ...m, sources: ev.sources }));
+      if (ev.type === "sources") patch(m => ({ ...m, sources: ev.sources, citations: ev.citations }));
       else if (ev.type === "delta") patch(m => ({ ...m, content: m.content + ev.text }));
+      else if (ev.type === "trace") { const { type: _, ...trace } = ev; patch(m => ({ ...m, trace })); }
+      else if (ev.type === "followups") patch(m => ({ ...m, followups: ev.questions }));
       else if (ev.type === "done") patch(m => ({ ...m, queryId: ev.query_id ?? undefined }));
       else if (ev.type === "error") setError(ev.detail);
     }, ctrl.signal);
@@ -184,13 +227,25 @@ export default function ChatPanel({ ask, onClose }: {
     abortRef.current?.abort();
     setMessages([]);
     setError("");
-    if (sessionId) store(`portfolio_chat:${sessionId}`, null);
+    setOpenSource(null);
+    if (sessionId) {
+      store(`portfolio_chat:${sessionId}`, null);
+      clearConversation(sessionId).catch(() => {});
+    }
     inputRef.current?.focus();
   }
 
   async function handleFeedback(msgId: string, queryId: string, val: 1 | -1) {
     setMessages(p => p.map(m => m.id === msgId ? { ...m, feedback: val } : m));
     await sendFeedback(queryId, val);
+  }
+
+  async function copy(msg: Message) {
+    try {
+      await navigator.clipboard.writeText(msg.content.replace(/\[(\d{1,2})\]/g, ""));
+      setCopied(msg.id);
+      setTimeout(() => setCopied(c => (c === msg.id ? null : c)), 1500);
+    } catch { /* clipboard blocked */ }
   }
 
   function profile(fields: { role?: string; industry?: string }, next: "industry" | "done") {
@@ -200,6 +255,7 @@ export default function ChatPanel({ ask, onClose }: {
   }
 
   const firstAnswerId = messages.find(m => m.role === "assistant" && m.content && m.id !== streamingId)?.id;
+  const lastAnswerId = [...messages].reverse().find(m => m.role === "assistant")?.id;
 
   return (
     <>
@@ -228,7 +284,7 @@ export default function ChatPanel({ ask, onClose }: {
           {messages.length === 0 && (
             <>
               <p style={{ fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.6 }}>
-                Ask anything about Toby&apos;s coursework, projects or experience. Answers cite the notes they came from.
+                Ask anything about Toby&apos;s coursework, projects or experience. Answers cite the notes they came from, and you can ask follow-ups.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {SUGGESTED.map(q => (
@@ -242,46 +298,58 @@ export default function ChatPanel({ ask, onClose }: {
             </>
           )}
 
-          {messages.map(msg => (
-            <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
-              {msg.role === "user" ? (
-                <div style={{ background: "var(--accent-strong)", color: "var(--on-accent)", fontSize: 13, padding: "8px 12px", borderRadius: "var(--radius-md)", maxWidth: "88%", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                  {msg.content}
-                </div>
-              ) : (
-                <div className="md md-sm" style={{ background: "var(--bg-secondary)", color: "var(--fg)", fontSize: 13, padding: "8px 12px", borderRadius: "var(--radius-md)", maxWidth: "94%", lineHeight: 1.6 }}>
-                  {msg.content
-                    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                    : <span style={{ color: "var(--fg-subtle)" }}>Thinking…</span>}
-                </div>
-              )}
+          {messages.map(msg => {
+            const known = (msg.sources || []).filter(s => docMap[s.google_doc_id]);
+            const isOpen = (docId: string) => openSource?.msgId === msg.id && openSource.docId === docId;
+            const cite = (n: number) => {
+              const c = msg.citations?.find(x => x.n === n);
+              if (c) setOpenSource(o => (o?.msgId === msg.id && o.docId === c.google_doc_id && o.heading === c.heading
+                ? null : { msgId: msg.id, docId: c.google_doc_id, heading: c.heading }));
+            };
+            return (
+              <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                {msg.role === "user" ? (
+                  <div style={{ background: "var(--accent-strong)", color: "var(--on-accent)", fontSize: 13, padding: "8px 12px", borderRadius: "var(--radius-md)", maxWidth: "88%", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                    {msg.content}
+                  </div>
+                ) : (
+                  <div className="md md-sm" style={{ background: "var(--bg-secondary)", color: "var(--fg)", fontSize: 13, padding: "8px 12px", borderRadius: "var(--radius-md)", maxWidth: "94%", lineHeight: 1.6 }}>
+                    {msg.content
+                      ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                          a: ({ href, children }) => {
+                            const n = href?.startsWith("#cite-") ? Number(href.slice(6)) : NaN;
+                            if (!Number.isNaN(n) && msg.citations?.some(c => c.n === n)) {
+                              return <button type="button" className="cite" onClick={() => cite(n)} aria-label={`Source ${n}`}>{n}</button>;
+                            }
+                            if (!Number.isNaN(n)) return null;   // a number the context didn't have
+                            return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+                          },
+                        }}>{withCiteLinks(msg.content)}</ReactMarkdown>
+                      : <span className="shimmer">Thinking…</span>}
+                  </div>
+                )}
 
-              {msg.role === "assistant" && (() => {
-                const known = (msg.sources || []).filter(s => docMap[s.google_doc_id]);
-                if (known.length === 0) return null;
-                return (
+                {msg.role === "assistant" && known.length > 0 && (
                   <div style={{ maxWidth: "94%", marginTop: 6 }}>
                     <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>From Toby&apos;s notes</p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {known.map(s => {
-                        const key = `${msg.id}:${s.google_doc_id}`;
-                        const isOpen = openSource === key;
-                        return (
-                          <button key={key} onClick={() => setOpenSource(isOpen ? null : key)} aria-expanded={isOpen}
-                                  style={{ ...chip(isOpen), fontSize: 11, padding: "3px 9px" }}>
-                            {docMap[s.google_doc_id].name}
-                          </button>
-                        );
-                      })}
+                      {known.map(s => (
+                        <button key={s.google_doc_id} aria-expanded={isOpen(s.google_doc_id)}
+                                onClick={() => setOpenSource(isOpen(s.google_doc_id) ? null : { msgId: msg.id, docId: s.google_doc_id })}
+                                style={{ ...chip(isOpen(s.google_doc_id)), fontSize: 11, padding: "3px 9px" }}>
+                          {docMap[s.google_doc_id].name}
+                        </button>
+                      ))}
                     </div>
-                    {known.map(s => {
-                      const key = `${msg.id}:${s.google_doc_id}`;
-                      if (openSource !== key) return null;
-                      const info = docMap[s.google_doc_id];
+                    {openSource?.msgId === msg.id && docMap[openSource.docId] && (() => {
+                      const info = docMap[openSource.docId];
                       return (
-                        <div key={key} style={{ marginTop: 6, padding: "9px 11px", background: "var(--bg-secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+                        <div style={{ marginTop: 6, padding: "9px 11px", background: "var(--bg-secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
                           <p style={{ fontSize: 12, fontWeight: 600 }}>{info.name}</p>
                           {info.course && <p style={{ fontSize: 10.5, color: "var(--fg-subtle)", marginTop: 1 }}>{info.course}</p>}
+                          {openSource.heading && (
+                            <p style={{ fontSize: 11, color: "var(--accent-text)", marginTop: 4 }}>Cited section: {openSource.heading.replace(/^#+\s*/, "")}</p>
+                          )}
                           <p style={{ fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.6, marginTop: 5 }}>
                             {info.summary || <span style={{ fontStyle: "italic" }}>No summary yet.</span>}
                           </p>
@@ -292,38 +360,55 @@ export default function ChatPanel({ ask, onClose }: {
                           )}
                         </div>
                       );
-                    })}
+                    })()}
                   </div>
-                );
-              })()}
+                )}
 
-              {msg.role === "assistant" && msg.queryId && (
-                <div style={{ display: "flex", gap: 2, marginTop: 2 }}>
-                  {([1, -1] as const).map(v => (
-                    <button key={v} onClick={() => handleFeedback(msg.id, msg.queryId!, v)}
-                            className="icon-btn" aria-label={v === 1 ? "Helpful" : "Not helpful"} aria-pressed={msg.feedback === v}
-                            style={{ fontSize: 13, opacity: msg.feedback === v ? 1 : 0.45 }}>
-                      {v === 1 ? "👍" : "👎"}
+                {msg.role === "assistant" && msg.content && msg.id !== streamingId && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, marginTop: 2 }}>
+                    <button onClick={() => copy(msg)} className="icon-btn" aria-label="Copy answer" title="Copy">
+                      {copied === msg.id
+                        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>
+                        : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>}
                     </button>
-                  ))}
-                </div>
-              )}
+                    {msg.queryId && ([1, -1] as const).map(v => (
+                      <button key={v} onClick={() => handleFeedback(msg.id, msg.queryId!, v)}
+                              className="icon-btn" aria-label={v === 1 ? "Helpful" : "Not helpful"} aria-pressed={msg.feedback === v}
+                              style={{ fontSize: 13, opacity: msg.feedback === v ? 1 : 0.45 }}>
+                        {v === 1 ? "👍" : "👎"}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-              {msg.id === firstAnswerId && profileStep !== "done" && (
-                <div style={{ marginTop: 10, padding: "10px 12px", border: "1px dashed var(--border-strong)", borderRadius: "var(--radius-md)", maxWidth: "94%" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <p style={{ fontSize: 12, fontWeight: 600 }}>{profileStep === "role" ? "Who's asking?" : "Which industry?"}</p>
-                    <button onClick={() => profile({}, "done")} className="btn-ghost" style={{ fontSize: 11, border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 6px", borderRadius: 4 }}>Skip</button>
+                {msg.role === "assistant" && msg.trace && msg.id !== streamingId && (
+                  <div style={{ maxWidth: "94%", width: "100%" }}><HowAnswered trace={msg.trace} /></div>
+                )}
+
+                {msg.id === lastAnswerId && !busy && (msg.followups?.length ?? 0) > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8, maxWidth: "94%" }}>
+                    {msg.followups!.map(q => (
+                      <button key={q} onClick={() => send(q)} style={{ ...chip(), textAlign: "left", borderRadius: "var(--radius-sm)" }}>{q}</button>
+                    ))}
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {profileStep === "role"
-                      ? ROLES.map(r => <button key={r.value} style={chip()} onClick={() => profile({ role: r.value }, "industry")}>{r.label}</button>)
-                      : INDUSTRIES.map(i => <button key={i} style={chip()} onClick={() => profile({ industry: i }, "done")}>{i}</button>)}
+                )}
+
+                {msg.id === firstAnswerId && profileStep !== "done" && (
+                  <div style={{ marginTop: 10, padding: "10px 12px", border: "1px dashed var(--border-strong)", borderRadius: "var(--radius-md)", maxWidth: "94%" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <p style={{ fontSize: 12, fontWeight: 600 }}>{profileStep === "role" ? "Who's asking?" : "Which industry?"}</p>
+                      <button onClick={() => profile({}, "done")} className="btn-ghost" style={{ fontSize: 11, border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 6px", borderRadius: 4 }}>Skip</button>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {profileStep === "role"
+                        ? ROLES.map(r => <button key={r.value} style={chip()} onClick={() => profile({ role: r.value }, "industry")}>{r.label}</button>)
+                        : INDUSTRIES.map(i => <button key={i} style={chip()} onClick={() => profile({ industry: i }, "done")}>{i}</button>)}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
           {error && <p role="alert" style={{ fontSize: 12, color: "var(--danger)", textAlign: "center" }}>{error}</p>}
           <div ref={endRef} />
         </div>
@@ -336,7 +421,7 @@ export default function ChatPanel({ ask, onClose }: {
             ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Ask something…"
+            placeholder={messages.length ? "Ask a follow-up…" : "Ask something…"}
             maxLength={500}
             style={{
               flex: 1, minWidth: 0, fontSize: 14, padding: "10px 12px", fontFamily: "inherit",

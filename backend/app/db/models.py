@@ -42,6 +42,7 @@ class Query(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(String, index=True)
     question = Column(Text, nullable=False)
+    rewritten_question = Column(Text, nullable=True)
     answer = Column(Text, nullable=False)
     chunks_used = Column(JSON, nullable=True)
     response_ms = Column(Integer, nullable=True)

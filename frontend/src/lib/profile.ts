@@ -5,6 +5,8 @@ export const PROFILE = {
   tagline: "Information Systems (Business Analytics) & Accountancy @ SMU",
   pitch: "I build data products end to end, and this site is one of them: my study notes are ingested from Google Drive, embedded, and answerable through the chat. Ask it what I know.",
   github: "https://github.com/TobyChann",
+  linkedin: "https://www.linkedin.com/in/toby-chan-ngok-jung/",
+  email: "tobychan276@gmail.com",
 };
 
 export const EDUCATION = {

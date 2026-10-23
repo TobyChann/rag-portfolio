@@ -1,13 +1,17 @@
 # backend/app/rag/pipeline.py
 import asyncio
+import re
 import time
 from openai import AsyncOpenAI
+from sqlalchemy import select
 from app.rag.embedder import embed_query
 from app.rag.retriever import search
 from app.sync.resume import get_resume_text
 from app.rag.overview import get_overview
 from app.cache.query_cache import get_cached_answer, set_cached_answer
 from app.config import get_settings
+from app.db.database import AsyncSessionLocal
+from app.db.models import Document, Folder
 from app.llm import gemini_client, is_transient_llm_error
 
 settings = get_settings()
@@ -43,19 +47,6 @@ async def _complete_with_retry(**kwargs):
             raise
 
 
-def _sources_from_chunks(chunks: list[dict]) -> list[dict]:
-    """Deduplicated source docs behind an answer, so the UI can link each back to
-    its note. Keeps first-seen order (highest-scoring first). Chunks without a
-    doc_id (e.g. pre-upgrade cache entries) are skipped."""
-    seen, sources = set(), []
-    for c in chunks:
-        doc_id = c.get("doc_id")
-        if not doc_id or doc_id in seen:
-            continue
-        seen.add(doc_id)
-        sources.append({"google_doc_id": doc_id, "title": c.get("doc_title", "")})
-    return sources
-
 SYSTEM_PROMPT = """You answer visitors' questions about Toby, a student whose portfolio this is.
 Use only the provided context (Toby's study notes and resume). If the context doesn't
 cover the question, say so plainly rather than guessing.
@@ -70,6 +61,11 @@ Voice:
   questions, the study-note excerpts for detail on a topic, and the resume for work
   and projects. Ignore whatever doesn't bear on the question.
 
+Citations:
+- Study-note excerpts are numbered [1], [2], ... When a sentence or bullet draws on one,
+  cite it at the end like [2] (or [1][3]). Only use numbers that appear in the context;
+  don't cite the resume or the overview.
+
 Format (Markdown, rendered in a small chat window — keep it skimmable):
 - Open with one short sentence that answers the question directly.
 - Then the specifics as a bulleted list ("- "), one tight line each, 2-6 bullets.
@@ -78,91 +74,198 @@ Format (Markdown, rendered in a small chat window — keep it skimmable):
 - No tables, no horizontal rules, no closing summary or filler.
 """
 
+CONDENSE_PROMPT = """Rewrite the visitor's latest message as one standalone question about Toby
+that makes sense without the conversation (resolve "that", "it", "what about X"). If it
+already stands alone, return it unchanged. Reply with the question only."""
+
 NO_CONTEXT_ANSWER = "I couldn't find anything about that in Toby's notes or resume."
+
+# The answer prompt replays this many recent turns verbatim, so replies read
+# naturally; retrieval only ever sees the condensed standalone question.
+ANSWER_HISTORY_TURNS = 2
+
+
+async def condense(question: str, history: list[dict]) -> str:
+    """Standalone version of a follow-up, for retrieval and the cache key."""
+    convo = "\n".join(f"Visitor: {t['q']}\nAssistant: {t['a']}" for t in history)
+    try:
+        res = await _complete_with_retry(
+            model=RAG_MODEL, max_tokens=80, temperature=0, **_EXTRA_PARAMS,
+            messages=[{"role": "system", "content": CONDENSE_PROMPT},
+                      {"role": "user", "content": f"Conversation:\n{convo}\n\nLatest message: {question}"}])
+        rewritten = (res.choices[0].message.content or "").strip().strip('"')
+        return rewritten or question
+    except Exception as e:
+        print(f"[rag] condense failed, using the raw question: {e}")
+        return question
+
+
+async def _doc_modules() -> dict[str, str]:
+    """google_doc_id -> name of the folder the note sits in."""
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(Document.google_doc_id, Folder.name)
+                                 .join(Folder, Folder.id == Document.folder_id, isouter=True))).all()
+    return {g: name or "" for g, name in rows}
 
 
 def _chunk_meta(chunks: list[dict]) -> list[dict]:
-    """What gets cached and logged per answer. Keeps doc_id so cached answers
-    can still link their sources."""
-    return [{"doc_id": c["doc_id"], "doc_title": c["doc_title"], "heading": c["heading"],
-             "score": c["score"]} for c in chunks]
+    """What gets cached and logged per answer: enough to rebuild sources,
+    citations and the retrieval trace on a cache hit."""
+    return [{"id": c.get("id"), "doc_id": c["doc_id"], "doc_title": c["doc_title"],
+             "heading": c["heading"], "chunk_index": c.get("chunk_index"), "score": c["score"],
+             "dense_rank": c.get("dense_rank"), "lexical_rank": c.get("lexical_rank")}
+            for c in chunks]
 
 
-def _llm_messages(question: str, chunks: list[dict], resume: str = "",
-                  overview: str = "") -> list[dict]:
-    blocks = [f"[From: {c['doc_title']} — {c['heading']}]\n{c['text']}" for c in chunks]
+def _sources(meta: list[dict], modules: dict[str, str]) -> list[dict]:
+    """One entry per note behind the answer, best-scoring first. Chunks without
+    a doc_id (pre-upgrade cache entries) are skipped."""
+    by_doc: dict[str, dict] = {}
+    for c in meta:
+        if not c.get("doc_id"):
+            continue
+        s = by_doc.setdefault(c["doc_id"], {"google_doc_id": c["doc_id"], "title": c.get("doc_title", ""),
+                                            "module": modules.get(c["doc_id"], ""), "chunk_ids": [],
+                                            "best_score": c["score"]})
+        s["chunk_ids"].append(c.get("id"))
+        s["best_score"] = max(s["best_score"], c["score"])
+    return list(by_doc.values())
+
+
+def _citations(meta: list[dict]) -> list[dict]:
+    """[n] in the answer -> the chunk it cites (same order as the prompt)."""
+    return [{"n": i + 1, "google_doc_id": c["doc_id"], "heading": c["heading"], "chunk_index": c.get("chunk_index")}
+            for i, c in enumerate(meta)]
+
+
+def _llm_messages(question: str, chunks: list[dict], resume: str = "", overview: str = "",
+                  history: list[dict] | None = None) -> list[dict]:
+    blocks = [f"[{i + 1}] (From: {c['doc_title']} — {c['heading']})\n{c['text']}" for i, c in enumerate(chunks)]
     if overview:
-        blocks.insert(0, f"[From: Modules overview]\n{overview}")
+        blocks.insert(0, f"(From: Modules overview)\n{overview}")
     if resume:
-        blocks.insert(0, f"[From: Resume]\n{resume}")
+        blocks.insert(0, f"(From: Resume)\n{resume}")
     context = "\n\n---\n\n".join(blocks)
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
-    ]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}]
+    for turn in (history or [])[-ANSWER_HISTORY_TURNS:][::-1]:
+        messages[1:1] = [{"role": "user", "content": turn["q"]}, {"role": "assistant", "content": turn["a"]}]
+    return messages
+
+
+_HEADING_NOISE = re.compile(r"^(image|question|quiz|week|deck|lab|example|notes?|random|feedback|team|"
+                            r"step|recap|summary|exam|steps|tier|case|task|assumption|comparison)\b", re.I)
+
+
+def _clean_heading(h: str) -> str:
+    h = re.sub(r"\$[^$]*\$", "", h or "")            # LaTeX like $\rightarrow$
+    h = re.sub(r"^[#\s\d.)(:-]+", "", h)              # markdown hashes, numbering
+    h = re.sub(r"\(.*?\)|[`*_]", "", h)
+    return re.sub(r"\s+", " ", h).strip(" :-–—")
+
+
+def _followups(meta: list[dict], answer: str, asked: list[str]) -> list[str]:
+    """Up to 3 next questions from the headings of retrieved chunks the answer
+    didn't cover. No LLM: cheap and can't drift off the notes."""
+    seen = {q.lower() for q in asked}
+    out: list[str] = []
+    for c in meta:
+        topic = _clean_heading(c.get("heading", ""))
+        if (len(topic) < 4 or len(topic) > 60 or not re.search(r"[A-Za-z]{3}", topic)
+                or _HEADING_NOISE.match(topic) or topic.lower() in answer.lower()):
+            continue
+        q = f"What did Toby learn about {topic}?"
+        if q.lower() not in seen:
+            seen.add(q.lower())
+            out.append(q)
+        if len(out) == 3:
+            break
+    return out
 
 
 # On Gemini, reasoning_effort="none" keeps thinking tokens from eating max_tokens
 # and truncating the answer; OpenAI models omit that param (see _EXTRA_PARAMS).
 _GEN_PARAMS = dict(max_tokens=1024, temperature=0.2, **_EXTRA_PARAMS)
+# Token counts for the trace arrive in a final usage chunk (OpenAI only).
+_STREAM_USAGE = {"stream_options": {"include_usage": True}} if _use_openai else {}
 
 
-async def stream_rag_query(question: str):
+async def stream_rag_query(question: str, history: list[dict] | None = None):
     """Async generator of answer events, so the UI can render while the model
     writes:
-      {"type": "sources", "sources": [...]}   once, before any text
-      {"type": "delta", "text": "..."}        repeatedly
-      {"type": "done", "answer", "chunks", "cache_hit", "response_ms"}
+      {"type": "sources", "sources": [...], "citations": [...]}   once, before any text
+      {"type": "delta", "text": "..."}                            repeatedly
+      {"type": "done", "answer", "chunks", "cache_hit", "response_ms",
+       "rewritten_question", "trace", "followups"}
+    `history` is the session's recent turns ({q, a}); a follow-up is condensed
+    into a standalone question before retrieval and the cache lookup.
     Exceptions propagate; the caller turns them into an error event."""
     start = time.time()
+    history = history or []
+    standalone = await condense(question, history) if history else question
+    asked = [t["q"] for t in history] + [question, standalone]
+    modules = await _doc_modules()
 
-    cached = await get_cached_answer(question)
+    def done(answer: str, meta: list[dict], cache_hit, tokens_in=None, tokens_out=None) -> dict:
+        ms = round((time.time() - start) * 1000)
+        return {"type": "done", "answer": answer, "chunks": meta, "cache_hit": cache_hit, "response_ms": ms,
+                "rewritten_question": standalone if standalone != question else None,
+                "followups": _followups(meta, answer, asked),
+                "trace": {"retrieval": [{"chunk_id": c.get("id"), "heading": c["heading"], "doc_title": c["doc_title"],
+                                         "dense_rank": c.get("dense_rank"), "lexical_rank": c.get("lexical_rank"),
+                                         "fused_score": c["score"]} for c in meta],
+                          "rewritten_question": standalone if standalone != question else None,
+                          "cache_hit": cache_hit, "response_ms": ms, "model": RAG_MODEL,
+                          "mode": settings.retrieval_mode, "tokens_in": tokens_in, "tokens_out": tokens_out}}
+
+    cached = await get_cached_answer(standalone)
     if cached:
-        yield {"type": "sources", "sources": _sources_from_chunks(cached["chunks"])}
+        meta = cached["chunks"]
+        yield {"type": "sources", "sources": _sources(meta, modules), "citations": _citations(meta)}
         yield {"type": "delta", "text": cached["answer"]}
-        yield {"type": "done", "answer": cached["answer"], "chunks": cached["chunks"],
-               "cache_hit": "redis", "response_ms": 0}
+        yield done(cached["answer"], meta, "redis")
         return
 
-    chunks = await search(question, await embed_query(question))
+    chunks = await search(standalone, await embed_query(standalone))
     resume = await get_resume_text()
     overview = await get_overview()
     if not chunks and not resume and not overview:
-        yield {"type": "sources", "sources": []}
+        yield {"type": "sources", "sources": [], "citations": []}
         yield {"type": "delta", "text": NO_CONTEXT_ANSWER}
-        yield {"type": "done", "answer": NO_CONTEXT_ANSWER, "chunks": [], "cache_hit": None,
-               "response_ms": round((time.time() - start) * 1000)}
+        yield done(NO_CONTEXT_ANSWER, [], None)
         return
 
     meta = _chunk_meta(chunks)
-    yield {"type": "sources", "sources": _sources_from_chunks(meta)}
+    yield {"type": "sources", "sources": _sources(meta, modules), "citations": _citations(meta)}
 
     # Retries only cover opening the stream (where 503s/429s surface); once
     # tokens are flowing a failure ends the answer.
     stream = await _complete_with_retry(model=RAG_MODEL,
-                                        messages=_llm_messages(question, chunks, resume, overview),
-                                        stream=True, **_GEN_PARAMS)
-    parts = []
+                                        messages=_llm_messages(question, chunks, resume, overview, history),
+                                        stream=True, **_GEN_PARAMS, **_STREAM_USAGE)
+    parts, usage = [], None
     async for event in stream:
+        if getattr(event, "usage", None):
+            usage = event.usage
         delta = event.choices[0].delta.content if event.choices else None
         if delta:
             parts.append(delta)
             yield {"type": "delta", "text": delta}
 
     answer = "".join(parts)
-    await set_cached_answer(question, answer, meta)
-    yield {"type": "done", "answer": answer, "chunks": meta, "cache_hit": None,
-           "response_ms": round((time.time() - start) * 1000)}
+    await set_cached_answer(standalone, answer, meta)
+    yield done(answer, meta, None, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
 
 
-async def run_rag_query(question: str) -> dict:
+async def run_rag_query(question: str, history: list[dict] | None = None) -> dict:
     """Non-streaming form: the same pipeline, collected into one result.
-    Returns {answer, chunks, sources, response_ms, cache_hit}."""
+    Returns {answer, chunks, sources, response_ms, cache_hit, rewritten_question}."""
     sources = []
-    async for event in stream_rag_query(question):
+    async for event in stream_rag_query(question, history):
         if event["type"] == "sources":
             sources = event["sources"]
         elif event["type"] == "done":
             return {"answer": event["answer"], "chunks": event["chunks"], "sources": sources,
-                    "response_ms": event["response_ms"], "cache_hit": event["cache_hit"]}
+                    "response_ms": event["response_ms"], "cache_hit": event["cache_hit"],
+                    "rewritten_question": event["rewritten_question"]}
     raise RuntimeError("RAG stream ended without a result")

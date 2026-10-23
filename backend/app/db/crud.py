@@ -25,10 +25,11 @@ async def create_visitor(db: AsyncSession, session_id: str, role: str,
 
 async def log_query(db: AsyncSession, session_id: str, question: str,
                     answer: str, chunks_used: list, response_ms: int,
-                    cache_hit: str = None):
+                    cache_hit: str = None, rewritten_question: str = None):
     query = Query(
         session_id=session_id,
         question=question,
+        rewritten_question=rewritten_question,
         answer=answer,
         chunks_used=chunks_used,
         response_ms=response_ms,
