@@ -1,9 +1,7 @@
 // frontend/src/components/portfolio/ModulesSection.tsx
 "use client";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
 import Link from "next/link";
-import { AnimatePresence, LazyMotion, MotionConfig } from "motion/react";
-import * as m from "motion/react-m";
 
 import { API_BASE as API } from "@/lib/api";
 
@@ -107,9 +105,11 @@ function buildTree(data: Portfolio): Tree {
   };
 }
 
-// Layout animation (card -> note modal) is the only motion feature used; it
-// loads after first paint so it never weighs on the homepage bundle.
-const loadMotionFeatures = () => import("./motion-features").then(mod => mod.default);
+// The card -> note modal morph. The animation library loads once the page is
+// idle, so it never weighs on first load; until then (and in Curate mode)
+// cards are plain buttons and the modal simply appears.
+type Motion = typeof import("./motion-features");
+const MotionCtx = createContext<Motion | null>(null);
 const MORPH = { type: "spring", bounce: 0.08, duration: 0.3 } as const;
 
 // Drag & drop payload (Curate mode): a note or a folder being moved.
@@ -225,6 +225,17 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
   // layoutId ties the open modal to the card it grew out of (a note can show
   // in the page grid and in the explorer, so the id carries where it was).
   const [modal, setModal] = useState<{ id: string; layoutId: string } | null>(null);
+  const [mo, setMo] = useState<Motion | null>(null);
+
+  useEffect(() => {
+    const load = () => { import("./motion-features").then(setMo).catch(() => {}); };
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(load);
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(load, 1500);
+    return () => clearTimeout(t);
+  }, []);
   const [newName, setNewName] = useState("");
   const [moveErr, setMoveErr] = useState("");
 
@@ -259,9 +270,12 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
   const looseDocs = tree.docsIn(null);
   const modalDoc = modal ? data.docs.find(d => d.id === modal.id) ?? null : null;
 
-  return (
-    <LazyMotion features={loadMotionFeatures} strict>
-    <MotionConfig reducedMotion="user" transition={MORPH}>
+  const modalEl = modalDoc && modal && (
+    <DocModal key={modal.layoutId} doc={modalDoc} tree={tree} editMode={editMode} layoutId={modal.layoutId}
+              onClose={() => setModal(null)} reload={load} />
+  );
+
+  const content = (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
         {tops.map(f => (
@@ -313,15 +327,14 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
         />
       )}
 
-      <AnimatePresence>
-        {modalDoc && modal && (
-          <DocModal key={modal.layoutId} doc={modalDoc} tree={tree} editMode={editMode} layoutId={modal.layoutId}
-                    onClose={() => setModal(null)} reload={load} />
-        )}
-      </AnimatePresence>
+      {mo ? <mo.AnimatePresence>{modalEl}</mo.AnimatePresence> : modalEl}
     </div>
-    </MotionConfig>
-    </LazyMotion>
+  );
+
+  return (
+    <MotionCtx.Provider value={mo}>
+      {mo ? <mo.MotionConfig reducedMotion="user" transition={MORPH}>{content}</mo.MotionConfig> : content}
+    </MotionCtx.Provider>
   );
 }
 
@@ -628,12 +641,13 @@ function DocCard({ doc, editMode, layoutId, onOpen }: {
   const synced = fmtSynced(doc.last_synced_at);
   // In Curate mode the card is draggable, which motion's own drag props would
   // shadow, so it stays a plain button there and skips the morph.
-  const Card: any = editMode ? "button" : m.button;
+  const mo = useContext(MotionCtx);
+  const Card: any = editMode || !mo ? "button" : mo.motion.button;
 
   return (
     <Card
       onClick={onOpen}
-      {...(editMode ? dragProps(editMode, { kind: "doc", id: doc.google_doc_id }) : { layoutId })}
+      {...(editMode ? dragProps(editMode, { kind: "doc", id: doc.google_doc_id }) : mo ? { layoutId } : {})}
       style={{
         display: "flex", flexDirection: "column", gap: 8, height: "100%",
         padding: "14px 16px", textAlign: "left", cursor: "pointer",
@@ -739,16 +753,22 @@ function DocModal({ doc, tree, editMode, layoutId, onClose, reload }: {
     if (res.ok) { setEditing(false); reload(); } else setErr("Save failed.");
   }
 
+  const mo = useContext(MotionCtx);
+  const Div: any = mo ? mo.motion.div : "div";
+  const anim = (props: object) => (mo ? props : {});
+
   const metaChip: React.CSSProperties = {
     fontSize: 11, padding: "3px 8px", borderRadius: 20,
     background: "var(--bg-tertiary)", color: "var(--fg-muted)",
   };
 
   return (
-    <m.div onClick={onClose} className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <m.div onClick={e => e.stopPropagation()} className="modal" layoutId={editMode ? undefined : layoutId}
+    <Div onClick={onClose} className="modal-backdrop" {...anim({ initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } })}>
+      <Div onClick={(e: React.MouseEvent) => e.stopPropagation()} className={mo ? "modal" : "modal fade-in"}
+             {...anim({ layoutId: editMode ? undefined : layoutId })}
              style={{ borderRadius: 16 }} role="dialog" aria-modal="true" aria-labelledby="doc-modal-title">
-      <m.div initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.08 } }} exit={{ opacity: 0, transition: { duration: 0.05 } }}>
+      <Div {...anim({ initial: { opacity: 0 }, animate: { opacity: 1, transition: { delay: 0.08 } },
+                      exit: { opacity: 0, transition: { duration: 0.05 } } })}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
           <h3 id="doc-modal-title" style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, margin: 0 }}>{doc.display_name}</h3>
           <button ref={closeRef} onClick={onClose} aria-label="Close note" className="icon-btn" style={{ flexShrink: 0, fontSize: 20 }}>×</button>
@@ -856,8 +876,8 @@ function DocModal({ doc, tree, editMode, layoutId, onClose, reload }: {
             </div>
           </div>
         )}
-      </m.div>
-      </m.div>
-    </m.div>
+      </Div>
+      </Div>
+    </Div>
   );
 }

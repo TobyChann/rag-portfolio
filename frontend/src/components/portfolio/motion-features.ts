@@ -1,3 +1,4 @@
-// Loaded on demand by LazyMotion (see ModulesSection), so the layout
-// animation engine stays out of the homepage's initial bundle.
-export { domMax as default } from "motion/react";
+// Imported only after the homepage is idle (see ModulesSection), so the
+// animation library never weighs on first load. Until it arrives, note cards
+// are plain buttons and the modal opens without the morph.
+export { AnimatePresence, MotionConfig, motion } from "motion/react";

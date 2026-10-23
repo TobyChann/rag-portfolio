@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useState } from "react";
 import PipelineDiagram, { STAGES, BARS } from "@/components/portfolio/PipelineDiagram";
 import ModulesSection, { type Portfolio } from "@/components/portfolio/ModulesSection";
-import SkillsBoard from "@/components/admin/SkillsBoard";
+import dynamic from "next/dynamic";
+
+// Owner-only, so visitors never download it.
+const SkillsBoard = dynamic(() => import("@/components/admin/SkillsBoard"), { ssr: false });
 import SkillChips from "@/components/portfolio/SkillChips";
 import { API_BASE as API } from "@/lib/api";
 import type { SkillEvidence } from "@/types";
