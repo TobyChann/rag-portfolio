@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     zilliz_token: str
     zilliz_collection: str = "portfolio_chunks"
 
+    # Visitor retrieval: dense | pg_dense | hybrid | pg_hybrid (see rag/retriever.search).
+    # Changes only when the eval (python -m app.evals.run) shows a win.
+    retrieval_mode: str = "dense"
+
     # Database
     database_url: str
 

@@ -36,7 +36,8 @@ export default function PlanningPage() {
   // Owner-only page
   useEffect(() => {
     fetch(`${API}/admin/me`, { credentials: "include" })
-      .then(r => { if (r.ok) { setAuthed(true); loadChats(); } else router.push("/login"); })
+      .then(r => (r.ok ? r.json() : { authenticated: false }))
+      .then(d => { if (d.authenticated) { setAuthed(true); loadChats(); } else router.push("/login"); })
       .catch(() => router.push("/login"));
   }, []);
 

@@ -46,7 +46,7 @@ export default function AdminPage() {
   async function checkAuth() {
     try {
       const res = await fetch(`${API}/admin/me`, { credentials: "include" });
-      if (!res.ok) { router.push("/login"); return; }
+      if (!res.ok || !(await res.json()).authenticated) { router.push("/login"); return; }
       loadStats();
     } catch {
       router.push("/login");

@@ -1,5 +1,7 @@
-from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, JSON, Boolean, ForeignKey, Table, LargeBinary
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (Column, String, Integer, Text, DateTime, Enum, JSON, Boolean, ForeignKey,
+                        Table, LargeBinary, Float, Computed, Index)
+from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
+from sqlalchemy.types import UserDefinedType
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import uuid
@@ -153,3 +155,65 @@ class Resume(Base):
     data = Column(LargeBinary, nullable=False)
     text = Column(Text, nullable=True)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Vector(UserDefinedType):
+    """pgvector column without the pgvector package: values travel as the
+    '[x,y,...]' text form, which Postgres casts on the way in."""
+    cache_ok = True
+
+    def __init__(self, dim: int):
+        self.dim = dim
+
+    def get_col_spec(self, **kw):
+        return f"vector({self.dim})"
+
+    def bind_processor(self, dialect):
+        return lambda v: None if v is None else "[" + ",".join(map(str, v)) + "]"
+
+    def result_processor(self, dialect, coltype):
+        return lambda v: None if v is None else [float(x) for x in v.strip("[]").split(",")]
+
+
+# Course codes are indexed and queried joined up ("IS 459" -> "IS459").
+COURSE_CODE_SQL = r"regexp_replace({}, '([A-Za-z]{{2,4}})\s+([0-9]{{3}})', '\1\2', 'g')"
+
+
+class Chunk(Base):
+    """Postgres mirror of the Zilliz chunks: full-text search for hybrid
+    retrieval, the vectors for the pgvector benchmark and the knowledge map.
+    Same ids as Zilliz; ingestion rewrites a doc's rows whenever it rewrites
+    its vectors."""
+    __tablename__ = "chunks"
+
+    id = Column(String, primary_key=True)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"),
+                         nullable=True, index=True)
+    google_doc_id = Column(String, nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    heading = Column(Text, nullable=False, default="")
+    text = Column(Text, nullable=False)
+    tsv = Column(TSVECTOR, Computed(
+        "setweight(to_tsvector('english', " + COURSE_CODE_SQL.format("coalesce(heading, '')") + "), 'A') || "
+        "setweight(to_tsvector('english', " + COURSE_CODE_SQL.format("text") + "), 'B')",
+        persisted=True))
+    embedding = Column(Vector(384), nullable=True)
+    map_x = Column(Float, nullable=True)
+    map_y = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
+        Index("ix_chunks_embedding_hnsw", "embedding", postgresql_using="hnsw",
+              postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+
+
+class EvalRun(Base):
+    """One run of the retrieval / answer eval over evals/golden.jsonl."""
+    __tablename__ = "eval_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    config = Column(JSON, nullable=False)
+    metrics = Column(JSON, nullable=True)
+    per_question = Column(JSON, nullable=True)

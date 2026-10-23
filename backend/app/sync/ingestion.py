@@ -22,6 +22,7 @@ from app.sync.google_client import (
 from app.rag.chunker import chunk_document
 from app.rag.embedder import _encode_texts
 from app.rag.retriever import upsert_chunks, delete_chunks_for_doc, keep_alive
+from app.rag.pg_chunks import replace_doc_chunks
 from app.db.database import AsyncSessionLocal
 from app.db.models import Document, Skill
 from app.config import get_settings
@@ -393,6 +394,11 @@ async def ingest_document(google_doc_id: str, title: str = None) -> dict:
         await _persist_document(google_doc_id, title, len(chunks), text, parse_status)
     except Exception as e:
         print(f"[ingest] Document row persist failed for {title}: {e}")
+    # After the Document row exists, so the mirror rows can link to it.
+    try:
+        await replace_doc_chunks(google_doc_id, embedded_chunks)
+    except Exception as e:
+        print(f"[ingest] Postgres chunk mirror failed for {title}: {e} (run app.sync.backfill_chunks)")
 
     elapsed = round((time.time() - start) * 1000)
     print(f"[ingest] Done: {title} — {len(chunks)} chunks in {elapsed}ms ({parse_status})")

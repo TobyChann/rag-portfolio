@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from app.config import get_settings
 
@@ -31,6 +32,9 @@ async def init_db():
     # otherwise shadow with fresh empty ones.
     from app.db.migrations import run_migrations
     async with engine.begin() as conn:
+        # pgvector ships in the image but each database opts in; the chunks
+        # table needs it before create_all.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         applied = await run_migrations(conn)
         if applied:
             print(f"[startup] Applied migrations: {', '.join(applied)}")

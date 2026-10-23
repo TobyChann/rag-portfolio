@@ -3,7 +3,7 @@ import asyncio
 import time
 from openai import AsyncOpenAI
 from app.rag.embedder import embed_query
-from app.rag.retriever import retrieve
+from app.rag.retriever import search
 from app.sync.resume import get_resume_text
 from app.rag.overview import get_overview
 from app.cache.query_cache import get_cached_answer, set_cached_answer
@@ -124,7 +124,7 @@ async def stream_rag_query(question: str):
                "cache_hit": "redis", "response_ms": 0}
         return
 
-    chunks = await retrieve(await embed_query(question))
+    chunks = await search(question, await embed_query(question))
     resume = await get_resume_text()
     overview = await get_overview()
     if not chunks and not resume and not overview:

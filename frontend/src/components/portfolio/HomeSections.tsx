@@ -18,7 +18,8 @@ export default function HomeSections({ skills: initialSkills, portfolio, educati
 
   useEffect(() => {
     fetch(`${API}/admin/me`, { credentials: "include" })
-      .then(r => { if (r.ok) setIsAdmin(true); })
+      .then(r => (r.ok ? r.json() : { authenticated: false }))
+      .then(d => setIsAdmin(!!d.authenticated))
       .catch(() => {});
   }, []);
 
