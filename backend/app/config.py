@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     proxy_secret: str = ""
     rate_limit_per_hour: int = 20
     match_rate_limit_per_hour: int = 3
+    # OpenAI spend guard (cache/budget.py): past this many USD in a UTC day,
+    # visitor answers fall back to Gemini and the JD matcher pauses.
+    daily_openai_budget_usd: float = 0.50
+    openai_price_in_per_m: float = 0.15    # gpt-4o-mini, USD per 1M input tokens
+    openai_price_out_per_m: float = 0.60   # USD per 1M output tokens
     search_rate_limit_per_hour: int = 120
     session_ttl_seconds: int = 86400
 
