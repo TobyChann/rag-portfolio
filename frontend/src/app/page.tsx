@@ -1,4 +1,5 @@
 // frontend/src/app/page.tsx
+import Link from "next/link";
 import { API_BASE, serverFetch } from "@/lib/api";
 import { PROFILE, EDUCATION } from "@/lib/profile";
 import AskBox from "@/components/portfolio/AskBox";
@@ -62,6 +63,9 @@ export default async function HomePage() {
         <p style={{ fontSize: 15, color: "var(--fg-muted)", lineHeight: 1.7, marginTop: 12, maxWidth: 620 }}>{PROFILE.pitch}</p>
         <AskBox />
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+          <Link href="/match" className="btn btn-secondary" style={{ fontSize: 13 }}>
+            Match me to a job description →
+          </Link>
           {resume.exists && (
             <a href={`${API_BASE}/resume`} className="btn btn-secondary" style={{ fontSize: 13 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

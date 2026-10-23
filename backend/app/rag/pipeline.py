@@ -139,12 +139,15 @@ def _citations(meta: list[dict]) -> list[dict]:
 
 
 def _llm_messages(question: str, chunks: list[dict], resume: str = "", overview: str = "",
-                  history: list[dict] | None = None) -> list[dict]:
+                  history: list[dict] | None = None, role_context: str | None = None) -> list[dict]:
     blocks = [f"[{i + 1}] (From: {c['doc_title']} — {c['heading']})\n{c['text']}" for i, c in enumerate(chunks)]
     if overview:
         blocks.insert(0, f"(From: Modules overview)\n{overview}")
     if resume:
         blocks.insert(0, f"(From: Resume)\n{resume}")
+    if role_context:
+        blocks.insert(0, "(The visitor is weighing Toby for this role; relate the answer to it where relevant, "
+                         f"without overstating Toby's fit)\n{role_context}")
     context = "\n\n---\n\n".join(blocks)
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}]
@@ -190,7 +193,7 @@ _GEN_PARAMS = dict(max_tokens=1024, temperature=0.2, **_EXTRA_PARAMS)
 _STREAM_USAGE = {"stream_options": {"include_usage": True}} if _use_openai else {}
 
 
-async def stream_rag_query(question: str, history: list[dict] | None = None):
+async def stream_rag_query(question: str, history: list[dict] | None = None, role_context: str | None = None):
     """Async generator of answer events, so the UI can render while the model
     writes:
       {"type": "sources", "sources": [...], "citations": [...]}   once, before any text
@@ -199,6 +202,8 @@ async def stream_rag_query(question: str, history: list[dict] | None = None):
        "rewritten_question", "trace", "followups"}
     `history` is the session's recent turns ({q, a}); a follow-up is condensed
     into a standalone question before retrieval and the cache lookup.
+    `role_context` (a job the visitor matched Toby against) shapes the answer,
+    so those answers bypass the shared answer cache.
     Exceptions propagate; the caller turns them into an error event."""
     start = time.time()
     history = history or []
@@ -218,7 +223,7 @@ async def stream_rag_query(question: str, history: list[dict] | None = None):
                           "cache_hit": cache_hit, "response_ms": ms, "model": RAG_MODEL,
                           "mode": settings.retrieval_mode, "tokens_in": tokens_in, "tokens_out": tokens_out}}
 
-    cached = await get_cached_answer(standalone)
+    cached = None if role_context else await get_cached_answer(standalone)
     if cached:
         meta = cached["chunks"]
         yield {"type": "sources", "sources": _sources(meta, modules), "citations": _citations(meta)}
@@ -241,7 +246,8 @@ async def stream_rag_query(question: str, history: list[dict] | None = None):
     # Retries only cover opening the stream (where 503s/429s surface); once
     # tokens are flowing a failure ends the answer.
     stream = await _complete_with_retry(model=RAG_MODEL,
-                                        messages=_llm_messages(question, chunks, resume, overview, history),
+                                        messages=_llm_messages(question, chunks, resume, overview, history,
+                                                               role_context),
                                         stream=True, **_GEN_PARAMS, **_STREAM_USAGE)
     parts, usage = [], None
     async for event in stream:
@@ -253,15 +259,17 @@ async def stream_rag_query(question: str, history: list[dict] | None = None):
             yield {"type": "delta", "text": delta}
 
     answer = "".join(parts)
-    await set_cached_answer(standalone, answer, meta)
+    if not role_context:
+        await set_cached_answer(standalone, answer, meta)
     yield done(answer, meta, None, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
 
 
-async def run_rag_query(question: str, history: list[dict] | None = None) -> dict:
+async def run_rag_query(question: str, history: list[dict] | None = None,
+                        role_context: str | None = None) -> dict:
     """Non-streaming form: the same pipeline, collected into one result.
     Returns {answer, chunks, sources, response_ms, cache_hit, rewritten_question}."""
     sources = []
-    async for event in stream_rag_query(question, history):
+    async for event in stream_rag_query(question, history, role_context):
         if event["type"] == "sources":
             sources = event["sources"]
         elif event["type"] == "done":

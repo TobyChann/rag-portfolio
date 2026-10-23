@@ -1,13 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { OPEN_CHAT_EVENT } from "@/lib/api";
+import { OPEN_CHAT_EVENT, REF_KEY } from "@/lib/api";
 
 // The panel (and react-markdown with it) loads on first open, so pages that
 // never open the chat don't ship it.
 const ChatPanel = dynamic(() => import("./ChatPanel"), { ssr: false });
-
-export const REF_KEY = "portfolio_ref";
 
 export default function Chatbot() {
   const [open, setOpen] = useState(false);

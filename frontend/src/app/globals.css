@@ -522,6 +522,37 @@ kbd {
 .c4 .boundary-label { font-size: 12px; font-weight: 600; fill: var(--fg-subtle); }
 .zoom-fit .c4 { height: 100%; }
 
+/* ─── JD matcher ─────────────────────────────────────────── */
+.match-row {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) 88px minmax(0, 2fr); gap: 14px;
+  padding: 12px 4px; border-bottom: 1px solid var(--border); font-size: 13.5px; align-items: start;
+}
+.match-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-subtle); padding-top: 0; }
+@media (max-width: 639px) {
+  .match-row { grid-template-columns: 1fr auto; gap: 6px 10px; }
+  .match-row > :nth-child(3) { grid-column: 1 / -1; }
+  .match-head { display: none; }
+}
+.verdict { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 20px; border: 1px solid; }
+.verdict-strong { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+.verdict-partial { background: var(--accent-light); color: var(--accent-text); border-color: var(--accent-border); }
+.verdict-gap { background: var(--bg-tertiary); color: var(--fg-muted); border-color: var(--border-strong); }
+.verdict-bar { display: flex; gap: 3px; margin-top: 12px; border-radius: var(--radius-sm); overflow: hidden; }
+.verdict-seg { font-size: 11.5px; font-weight: 600; padding: 6px 10px; white-space: nowrap; border: none; border-radius: 0; }
+.ev-chip {
+  display: inline-block; font-size: 11px; padding: 2px 9px; border-radius: 20px; text-decoration: none;
+  background: var(--tag-blue-bg); color: var(--tag-blue-fg); border: 1px solid var(--tag-blue-border);
+}
+.ev-chip-plain { background: var(--bg-tertiary); color: var(--fg-muted); border-color: var(--border); }
+
+@media print {
+  header, footer, .chat-fab, .match-actions, .match-form, .nav-inner { display: none !important; }
+  body { background: #fff; color: #000; }
+  .page { padding: 0; max-width: none; }
+  .match-row { break-inside: avoid; }
+  .fade-in { animation: none; }
+}
+
 /* ─── Chat answers ───────────────────────────────────────── */
 .cite {
   display: inline-flex; align-items: center; justify-content: center;
