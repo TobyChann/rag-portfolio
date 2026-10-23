@@ -46,7 +46,7 @@ The free Developer plan includes 5,000 base traces/month (as of the last publish
 
 `node_modules/next/dist/compiled/@next/font/dist/google/font-data.json` (Next 14.2.3) has no Geist entry. Per §3.3 the fallback is committed woff2 files + `next/font/local`.
 
-**Needs approval:** download `GeistVF.woff2` and `GeistMonoVF.woff2` (OFL-1.1) from the official `vercel/geist-font` GitHub release into `frontend/src/app/fonts/`. Until then the font stack falls back to system-ui.
+**Done:** the variable fonts from the official `vercel/geist-font` v1.7.2 release (`Geist[wght].woff2`, `GeistMono[wght].woff2`, OFL-1.1) are committed as `frontend/src/app/fonts/GeistVF.woff2` and `GeistMonoVF.woff2` and loaded with `next/font/local` in `layout.tsx`. v1.7.2 (June 2026) was chosen over the days-old v1.8.x releases.
 
 ## 6. Corpus size
 

@@ -1,11 +1,17 @@
 import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
 import "./globals.css";
 import NavBar from "@/components/portfolio/NavBar";
 import Footer from "@/components/portfolio/Footer";
 import Chatbot from "@/components/chat/Chatbot";
 import { PROFILE, EDUCATION, SITE_URL } from "@/lib/profile";
 
-const description = `${PROFILE.tagline}. Ask an AI assistant grounded in his actual study notes about his skills, coursework and projects.`;
+// Geist v1.7.2 variable fonts (OFL, fonts/OFL.txt). Next 14.2's Google font
+// list predates Geist, so they're served locally.
+const geistSans = localFont({ src: "./fonts/GeistVF.woff2", variable: "--font-geist-sans", weight: "100 900" });
+const geistMono = localFont({ src: "./fonts/GeistMonoVF.woff2", variable: "--font-geist-mono", weight: "100 900" });
+
+const description =`${PROFILE.tagline}. Ask an AI assistant grounded in his actual study notes about his skills, coursework and projects.`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -39,7 +45,7 @@ const personLd = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(personLd) }} />
