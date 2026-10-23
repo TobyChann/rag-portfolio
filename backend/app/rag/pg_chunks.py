@@ -35,19 +35,23 @@ async def replace_doc_chunks(google_doc_id: str, embedded_chunks: list[dict]):
         await db.commit()
 
 
-async def lexical_search(question: str, limit: int = 20) -> list[dict]:
+async def lexical_search(question: str, limit: int = 20, doc_id: str | None = None) -> list[dict]:
+    """`doc_id` limits the search to one note."""
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text(
             f"SELECT {_ROW}, ts_rank_cd(c.tsv, q) AS score {_JOIN}, {_QUERY} q "
-            "WHERE c.tsv @@ q ORDER BY score DESC LIMIT :n"), {"q": question, "n": limit})).mappings().all()
+            "WHERE c.tsv @@ q AND (CAST(:g AS text) IS NULL OR c.google_doc_id = :g) "
+            "ORDER BY score DESC LIMIT :n"), {"q": question, "n": limit, "g": doc_id})).mappings().all()
     return [dict(r) for r in rows]
 
 
-async def dense_search(vector: list[float], limit: int = 20) -> list[dict]:
+async def dense_search(vector: list[float], limit: int = 20, doc_id: str | None = None) -> list[dict]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(text(
             f"SELECT {_ROW}, 1 - (c.embedding <=> CAST(:v AS vector)) AS score {_JOIN} "
-            "ORDER BY c.embedding <=> CAST(:v AS vector) LIMIT :n"), {"v": _vec(vector), "n": limit})).mappings().all()
+            "WHERE CAST(:g AS text) IS NULL OR c.google_doc_id = :g "
+            "ORDER BY c.embedding <=> CAST(:v AS vector) LIMIT :n"),
+            {"v": _vec(vector), "n": limit, "g": doc_id})).mappings().all()
     return [dict(r) for r in rows]
 
 

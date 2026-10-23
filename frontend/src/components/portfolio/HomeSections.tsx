@@ -3,12 +3,15 @@ import { useCallback, useEffect, useState } from "react";
 import PipelineDiagram, { STAGES, BARS } from "@/components/portfolio/PipelineDiagram";
 import ModulesSection, { type Portfolio } from "@/components/portfolio/ModulesSection";
 import SkillsBoard from "@/components/admin/SkillsBoard";
+import SkillChips from "@/components/portfolio/SkillChips";
 import { API_BASE as API } from "@/lib/api";
+import type { SkillEvidence } from "@/types";
 
 // The server renders these with the public data; for the owner, the same
 // components hydrate and switch into Curate mode.
-export default function HomeSections({ skills: initialSkills, portfolio, education }: {
+export default function HomeSections({ skills: initialSkills, evidence, portfolio, education }: {
   skills: Record<string, string[]>;
+  evidence: SkillEvidence[];
   portfolio: Portfolio;
   education: React.ReactNode;
 }) {
@@ -57,8 +60,9 @@ export default function HomeSections({ skills: initialSkills, portfolio, educati
       <section style={{ marginBottom: 48 }} aria-labelledby="skills-heading">
         <h2 id="skills-heading" className="section-label" style={{ marginBottom: 20 }}>Skills pipeline</h2>
         <PipelineDiagram stages={stages} bars={bars} />
-        <p style={{ fontSize: 11, color: "var(--fg-subtle)", textAlign: "center", marginTop: 10 }}>
-          Select a stage to see every tool and skill in it
+        <SkillChips skills={evidence} />
+        <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 12 }}>
+          The number on a skill is how many of Toby&apos;s notes evidence it. Select one to see them.
         </p>
         {editMode && (
           <div style={{ marginTop: 16 }}>

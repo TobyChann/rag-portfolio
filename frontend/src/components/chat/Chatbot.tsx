@@ -9,7 +9,7 @@ const ChatPanel = dynamic(() => import("./ChatPanel"), { ssr: false });
 
 export default function Chatbot() {
   const [open, setOpen] = useState(false);
-  const [ask, setAsk] = useState<{ q: string; n: number } | null>(null);
+  const [ask, setAsk] = useState<{ q: string; n: number; docId?: string } | null>(null);
   const opener = useRef<HTMLElement | null>(null);
 
   // Keep the first ?ref= this browser arrived with, so attribution survives
@@ -22,12 +22,15 @@ export default function Chatbot() {
   }, []);
 
   useEffect(() => {
-    function show(question?: string) {
+    function show(question?: string, docId?: string) {
       opener.current = document.activeElement as HTMLElement | null;
       setOpen(true);
-      if (question) setAsk(a => ({ q: question, n: (a?.n ?? 0) + 1 }));
+      if (question) setAsk(a => ({ q: question, n: (a?.n ?? 0) + 1, docId }));
     }
-    const onOpen = (e: Event) => show((e as CustomEvent<{ question?: string }>).detail?.question);
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ question?: string; docId?: string }>).detail;
+      show(d?.question, d?.docId);
+    };
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); show(); }
     };

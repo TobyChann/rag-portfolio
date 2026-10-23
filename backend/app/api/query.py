@@ -41,6 +41,7 @@ class VisitorUpdate(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     session_id: str
+    doc_id: Optional[str] = Field(default=None, max_length=200)   # "Ask about this note"
 
 
 class FeedbackRequest(BaseModel):
@@ -176,7 +177,7 @@ async def query_stream(
 
     async def events():
         try:
-            async for ev in stream_rag_query(req.question, history, session.get("role_context")):
+            async for ev in stream_rag_query(req.question, history, session.get("role_context"), req.doc_id):
                 if ev["type"] != "done":
                     yield json.dumps(ev) + "\n"
                     continue

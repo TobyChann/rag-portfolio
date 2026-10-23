@@ -98,9 +98,11 @@ export type QueryEvent =
   | { type: "done"; query_id: string | null; cache_hit: string | null; response_ms: number }
   | { type: "error"; detail: string };
 
+/** `docId` limits the answer to one note ("Ask about this note"). */
 export function streamQuery(question: string, sessionId: string,
-                            onEvent: (e: QueryEvent) => void, signal?: AbortSignal) {
-  return streamNdjson<QueryEvent>("/query/stream", { question, session_id: sessionId }, onEvent, signal);
+                            onEvent: (e: QueryEvent) => void, signal?: AbortSignal, docId?: string) {
+  return streamNdjson<QueryEvent>("/query/stream", { question, session_id: sessionId, doc_id: docId ?? null },
+                                  onEvent, signal);
 }
 
 export type MatchEvent =
@@ -126,8 +128,9 @@ export async function sendFeedback(queryId: string, feedback: 1 | -1) {
   });
 }
 
-/** Any component can open the chat panel, optionally asking a question. */
+/** Any component can open the chat panel, optionally asking a question
+ *  (scoped to one note when `docId` is given). */
 export const OPEN_CHAT_EVENT = "open-chat";
-export function openChat(question?: string) {
-  window.dispatchEvent(new CustomEvent(OPEN_CHAT_EVENT, { detail: { question } }));
+export function openChat(question?: string, docId?: string) {
+  window.dispatchEvent(new CustomEvent(OPEN_CHAT_EVENT, { detail: { question, docId } }));
 }

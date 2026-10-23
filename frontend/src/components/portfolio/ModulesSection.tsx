@@ -1,6 +1,9 @@
 // frontend/src/components/portfolio/ModulesSection.tsx
 "use client";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
+import { AnimatePresence, LazyMotion, MotionConfig } from "motion/react";
+import * as m from "motion/react-m";
 
 import { API_BASE as API } from "@/lib/api";
 
@@ -103,6 +106,11 @@ function buildTree(data: Portfolio): Tree {
     path, counts, options,
   };
 }
+
+// Layout animation (card -> note modal) is the only motion feature used; it
+// loads after first paint so it never weighs on the homepage bundle.
+const loadMotionFeatures = () => import("./motion-features").then(mod => mod.default);
+const MORPH = { type: "spring", bounce: 0.08, duration: 0.3 } as const;
 
 // Drag & drop payload (Curate mode): a note or a folder being moved.
 type DragItem = { kind: "doc"; id: string } | { kind: "folder"; id: string };
@@ -214,7 +222,9 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
   const [data, setData] = useState<Portfolio>(initial);
   const [error, setError] = useState("");
   const [explorerAt, setExplorerAt] = useState<string | null | undefined>(undefined);  // undefined = closed
-  const [modalDocId, setModalDocId] = useState<string | null>(null);
+  // layoutId ties the open modal to the card it grew out of (a note can show
+  // in the page grid and in the explorer, so the id carries where it was).
+  const [modal, setModal] = useState<{ id: string; layoutId: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [moveErr, setMoveErr] = useState("");
 
@@ -247,9 +257,11 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
 
   const tops = tree.childFolders(null);
   const looseDocs = tree.docsIn(null);
-  const modalDoc = modalDocId ? data.docs.find(d => d.id === modalDocId) ?? null : null;
+  const modalDoc = modal ? data.docs.find(d => d.id === modal.id) ?? null : null;
 
   return (
+    <LazyMotion features={loadMotionFeatures} strict>
+    <MotionConfig reducedMotion="user" transition={MORPH}>
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
         {tops.map(f => (
@@ -263,7 +275,8 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
           {tops.length > 0 && <p className="section-label" style={{ margin: "8px 0" }}>Other notes</p>}
           <div style={NOTE_GRID}>
             {looseDocs.map(doc => (
-              <DocCard key={doc.id} doc={doc} editMode={editMode} onOpen={() => setModalDocId(doc.id)} />
+              <DocCard key={doc.id} doc={doc} editMode={editMode} layoutId={`main-${doc.id}`}
+                       onOpen={() => setModal({ id: doc.id, layoutId: `main-${doc.id}` })} />
             ))}
           </div>
         </div>
@@ -294,17 +307,21 @@ export default function ModulesSection({ initial, editMode }: { initial: Portfol
           startAt={explorerAt}
           editMode={editMode}
           docModalOpen={!!modalDoc}
-          onOpenDoc={doc => setModalDocId(doc.id)}
+          onOpenDoc={doc => setModal({ id: doc.id, layoutId: `explorer-${doc.id}` })}
           onClose={() => setExplorerAt(undefined)}
           reload={load}
         />
       )}
 
-      {modalDoc && (
-        <DocModal doc={modalDoc} tree={tree} editMode={editMode}
-                  onClose={() => setModalDocId(null)} reload={load} />
-      )}
+      <AnimatePresence>
+        {modalDoc && modal && (
+          <DocModal key={modal.layoutId} doc={modalDoc} tree={tree} editMode={editMode} layoutId={modal.layoutId}
+                    onClose={() => setModal(null)} reload={load} />
+        )}
+      </AnimatePresence>
     </div>
+    </MotionConfig>
+    </LazyMotion>
   );
 }
 
@@ -416,7 +433,8 @@ function FolderExplorer({ tree, startAt, editMode, docModalOpen, onOpenDoc, onCl
           {notes.length > 0 && (
             <div style={NOTE_GRID}>
               {notes.map(doc => (
-                <DocCard key={doc.id} doc={doc} editMode={editMode} onOpen={() => onOpenDoc(doc)} />
+                <DocCard key={doc.id} doc={doc} editMode={editMode} layoutId={`explorer-${doc.id}`}
+                         onOpen={() => onOpenDoc(doc)} />
               ))}
             </div>
           )}
@@ -601,25 +619,29 @@ function FolderEditor({ folder, tree, onDone, reload }: {
 
 // ─── Doc card (grid tile) ────────────────────────────────────
 
-function DocCard({ doc, editMode, onOpen }: {
+function DocCard({ doc, editMode, layoutId, onOpen }: {
   doc: PortfolioDoc;
   editMode: boolean;
+  layoutId: string;
   onOpen: () => void;
 }) {
   const synced = fmtSynced(doc.last_synced_at);
+  // In Curate mode the card is draggable, which motion's own drag props would
+  // shadow, so it stays a plain button there and skips the morph.
+  const Card: any = editMode ? "button" : m.button;
 
   return (
-    <button
+    <Card
       onClick={onOpen}
-      {...dragProps(editMode, { kind: "doc", id: doc.google_doc_id })}
+      {...(editMode ? dragProps(editMode, { kind: "doc", id: doc.google_doc_id }) : { layoutId })}
       style={{
         display: "flex", flexDirection: "column", gap: 8, height: "100%",
         padding: "14px 16px", textAlign: "left", cursor: "pointer",
         border: "1px solid var(--border)", borderRadius: "var(--radius-md)",
         background: "var(--bg-secondary)", transition: "border-color .15s, box-shadow .15s",
       }}
-      onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--border-strong)"; e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "none"; }}
+      onMouseEnter={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.borderColor = "var(--border-strong)"; e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
+      onMouseLeave={(e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "none"; }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>{doc.display_name}</span>
@@ -644,16 +666,17 @@ function DocCard({ doc, editMode, onOpen }: {
           </span>
         )}
       </div>
-    </button>
+    </Card>
   );
 }
 
 // ─── Doc modal (full detail + editor) ────────────────────────
 
-function DocModal({ doc, tree, editMode, onClose, reload }: {
+function DocModal({ doc, tree, editMode, layoutId, onClose, reload }: {
   doc: PortfolioDoc;
   tree: Tree;
   editMode: boolean;
+  layoutId: string;
   onClose: () => void;
   reload: () => void;
 }) {
@@ -722,8 +745,10 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
   };
 
   return (
-    <div onClick={onClose} className="modal-backdrop">
-      <div onClick={e => e.stopPropagation()} className="modal fade-in" role="dialog" aria-modal="true" aria-labelledby="doc-modal-title">
+    <m.div onClick={onClose} className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <m.div onClick={e => e.stopPropagation()} className="modal" layoutId={editMode ? undefined : layoutId}
+             style={{ borderRadius: 16 }} role="dialog" aria-modal="true" aria-labelledby="doc-modal-title">
+      <m.div initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.08 } }} exit={{ opacity: 0, transition: { duration: 0.05 } }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
           <h3 id="doc-modal-title" style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, margin: 0 }}>{doc.display_name}</h3>
           <button ref={closeRef} onClick={onClose} aria-label="Close note" className="icon-btn" style={{ flexShrink: 0, fontSize: 20 }}>×</button>
@@ -759,6 +784,11 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                 {doc.skills.map(s => <span key={s} className="tag tag-blue" style={{ fontSize: 11 }}>{s}</span>)}
               </div>
+            )}
+            {(!doc.tag_status || doc.tag_status === "approved") && (
+              <Link href={`/notes/${doc.google_doc_id}`} className="btn btn-secondary" style={{ fontSize: 12, marginTop: 16, marginRight: 6 }}>
+                Open full note →
+              </Link>
             )}
             {editMode && (
               <button onClick={() => setEditing(true)} className="btn btn-secondary" style={{ fontSize: 12, marginTop: 16 }}>
@@ -826,7 +856,8 @@ function DocModal({ doc, tree, editMode, onClose, reload }: {
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </m.div>
+      </m.div>
+    </m.div>
   );
 }
