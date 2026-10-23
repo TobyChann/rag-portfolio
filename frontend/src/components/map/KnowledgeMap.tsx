@@ -294,7 +294,12 @@ export default function KnowledgeMap({ snapshot }: { snapshot: MapSnapshot }) {
   return (
     <div>
       <div ref={wrapRef} className="kmap">
-        {!data && (
+        {(data ? data.points.length === 0 : snapshot.points.length === 0) && (
+          <p style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 13, color: "var(--fg-subtle)" }}>
+            {data ? "The map is being computed. Check back shortly." : "Loading the map…"}
+          </p>
+        )}
+        {!data && snapshot.points.length > 0 && (
           <svg viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet" role="img" opacity={0.7}
                aria-label={`Knowledge map: ${snapshot.points.length} sampled passages from Toby's notes, coloured by area`}>
             {snapshot.points.map(([x, y, m], i) => (
