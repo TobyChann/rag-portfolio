@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     proxy_secret: str = ""
     rate_limit_per_hour: int = 20
     match_rate_limit_per_hour: int = 3
+    search_rate_limit_per_hour: int = 120
     session_ttl_seconds: int = 86400
 
     # On-demand ISR: the frontend's /revalidate route and its shared secret.

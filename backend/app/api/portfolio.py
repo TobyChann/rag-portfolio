@@ -2,20 +2,27 @@
 """Public content for the home page: the notes tree (folders + documents), the
 skills diagram data, headline stats, and the resume download."""
 import json
+import re
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
 
 from app.api.auth import is_admin
+from app.cache.rate_limiter import hit_rate_limit
 from app.cache.redis_client import get_redis
+from app.config import get_settings
 from app.db.database import get_db
 from app.db.models import Folder, Document, Skill, Resume, document_skills
 from app.revalidate import PUBLIC_STATS_KEY, SKILLS_EVIDENCE_KEY
 from app.sync.google_client import NOTES_PREFIX
+from app.rag import pg_chunks
+from app.rag.embedder import embed_query
 from app.rag.projection import map_payload
+from app.rag.retriever import search
 
 router = APIRouter()
+settings = get_settings()
 
 
 def _display_name(title: str | None) -> str:
@@ -193,6 +200,28 @@ async def note(google_doc_id: str, db: AsyncSession = Depends(get_db)):
         "outline": [{"chunk_index": o["chunk_index"], "heading": o["heading"]} for o in outline],
         "related": [{"google_doc_id": g, "display_name": _display_name(t), "module": m} for g, t, m in related],
     }
+
+
+@router.get("/search")
+async def search_notes(request: Request, q: str = Query(min_length=2, max_length=200),
+                       db: AsyncSession = Depends(get_db)):
+    """Command-palette search: hybrid retrieval over approved notes, no LLM.
+    Up to 8 passages with a highlighted snippet (matches wrapped in ⟦ ⟧)."""
+    await hit_rate_limit(request, "search:", settings.search_rate_limit_per_hour, "searches")
+    mode = "pg_hybrid" if settings.retrieval_mode.startswith("pg") else "hybrid"
+    hits = await search(q, await embed_query(q), mode=mode, top_k=12)
+
+    approved = {g: (title, folder) for g, title, folder in (await db.execute(
+        select(Document.google_doc_id, Document.title, Folder.name)
+        .join(Folder, Folder.id == Document.folder_id, isouter=True)
+        .where(Document.tag_status == "approved"))).all()}
+    hits = [h for h in hits if h["doc_id"] in approved][:8]
+    excerpts = await pg_chunks.snippets([h["id"] for h in hits], q)
+    return [{"google_doc_id": h["doc_id"],
+             "display_name": approved[h["doc_id"]][1] or _display_name(approved[h["doc_id"]][0]),
+             "heading": re.sub(r"<[^>]+>|^#+\s*|\$[^$]*\$", "", h["heading"] or "").strip(),
+             "chunk_index": h["chunk_index"],
+             "snippet": excerpts.get(h["id"], "")[:240]} for h in hits]
 
 
 @router.get("/map")

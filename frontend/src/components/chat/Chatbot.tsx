@@ -31,12 +31,8 @@ export default function Chatbot() {
       const d = (e as CustomEvent<{ question?: string; docId?: string }>).detail;
       show(d?.question, d?.docId);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); show(); }
-    };
     window.addEventListener(OPEN_CHAT_EVENT, onOpen);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener(OPEN_CHAT_EVENT, onOpen); window.removeEventListener("keydown", onKey); };
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpen);
   }, []);
 
   function close() {

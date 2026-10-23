@@ -3,10 +3,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { API_BASE as API, openChat } from "@/lib/api";
-
-type Theme = "system" | "light" | "dark";
-const THEMES: Theme[] = ["system", "light", "dark"];
+import { API_BASE as API } from "@/lib/api";
+import { currentTheme, cycleTheme, THEME_EVENT, type Theme } from "@/lib/theme";
+import { openPalette } from "@/components/palette/PaletteLauncher";
 
 const THEME_ICONS: Record<Theme, React.ReactNode> = {
   system: <><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></>,
@@ -18,20 +17,14 @@ function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>("system");
 
   useEffect(() => {
-    const t = document.documentElement.dataset.theme;
-    setTheme(t === "light" || t === "dark" ? t : "system");
+    setTheme(currentTheme());
+    const onChange = (e: Event) => setTheme((e as CustomEvent<Theme>).detail);
+    window.addEventListener(THEME_EVENT, onChange);
+    return () => window.removeEventListener(THEME_EVENT, onChange);
   }, []);
 
-  function cycle() {
-    const next = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
-    setTheme(next);
-    if (next === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = next;
-    try { next === "system" ? localStorage.removeItem("theme") : localStorage.setItem("theme", next); } catch { /* not saved */ }
-  }
-
   return (
-    <button onClick={cycle} className="icon-btn" aria-label={`Theme: ${theme}. Switch theme`} title={`Theme: ${theme}`}>
+    <button onClick={cycleTheme} className="icon-btn" aria-label={`Theme: ${theme}. Switch theme`} title={`Theme: ${theme}`}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         {THEME_ICONS[theme]}
       </svg>
@@ -100,7 +93,7 @@ export default function NavBar() {
             </Link>
           ))}
 
-          <button onClick={() => openChat()} className="icon-btn" aria-label="Ask a question" aria-keyshortcuts="Control+K Meta+K">
+          <button onClick={openPalette} className="icon-btn" aria-label="Search notes and actions" aria-keyshortcuts="Control+K Meta+K">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
             </svg>

@@ -4,6 +4,7 @@ import "./globals.css";
 import NavBar from "@/components/portfolio/NavBar";
 import Footer from "@/components/portfolio/Footer";
 import Chatbot from "@/components/chat/Chatbot";
+import PaletteLauncher from "@/components/palette/PaletteLauncher";
 import { PROFILE, EDUCATION, SITE_URL } from "@/lib/profile";
 
 // Geist v1.7.2 variable fonts (OFL, fonts/OFL.txt). Next 14.2's Google font
@@ -58,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         <Footer />
         <Chatbot />
+        <PaletteLauncher />
       </body>
     </html>
   );
