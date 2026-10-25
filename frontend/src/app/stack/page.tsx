@@ -23,7 +23,7 @@ const RAG_STEPS = [
   { num:"01", title:"Rate limiting and session", body:"Incoming visitor queries hit /query, which first checks Redis for a per-IP rate-limit counter (20 per hour, 1-hour TTL) and a valid session token created during onboarding. Rejected requests never reach the embedding model or the LLM.", tags:["Redis","FastAPI dependency"] },
   { num:"02", title:"Cache check", body:"The question is normalised and SHA-256 hashed into a Redis key holding previous answers. A cache hit returns the stored answer instantly with zero LLM cost; entries live for 24 hours.", tags:["Redis","SHA-256 hash","24h TTL"] },
   { num:"03", title:"Semantic vector search", body:"On a miss, the query is embedded with the same all-MiniLM-L6-v2 model used at ingestion (metric consistency matters) and run as an ANN search against Zilliz using cosine similarity. The top K=5 chunks are returned with their source titles and headings.", tags:["Zilliz ANN","Cosine similarity","K=5"] },
-  { num:"04", title:"Answer generation", body:"The five retrieved note chunks go into the prompt together with two always-on blocks: the full resume (contact details stripped) and an outline of every module with its grade and summary. Vector search handles detail questions; the outline and resume make broad ones (\"what has Toby studied in Finance?\", \"what has Toby built?\") reliable. gpt-4o-mini answers via the official openai SDK (no LangChain) and the reply streams to the browser token by token as newline-delimited JSON, then is written back to the Redis cache.", tags:["gpt-4o-mini","Streaming","Resume + module outline","temp=0.2"] },
+  { num:"04", title:"Answer generation", body:"The five retrieved note chunks go into the prompt together with two always-on blocks: the full resume (contact details stripped) and an outline of every module with its grade and summary. Vector search handles detail questions; the outline and resume make broad ones (\"what have you studied in Finance?\", \"what have you built?\") reliable. gpt-4o-mini answers via the official openai SDK (no LangChain) and the reply streams to the browser token by token as newline-delimited JSON, then is written back to the Redis cache.", tags:["gpt-4o-mini","Streaming","Resume + module outline","temp=0.2"] },
 ];
 
 const JUSTIFICATIONS = [
@@ -140,10 +140,10 @@ export default function StackPage() {
       <section style={{ marginBottom:40 }}>
         <h1 style={{ fontSize:22, fontWeight:500, marginBottom:10 }}>How this works</h1>
         <p style={{ fontSize:14, color:"var(--fg-muted)", lineHeight:1.8, marginBottom:20 }}>
-          RAGPortfolio is an asynchronous Retrieval-Augmented Generation pipeline that keeps a
-          vector database in sync with a Google Drive knowledge base and answers questions over it.
-          Notes are parsed (multimodally when they contain images), embedded locally, and retrieved
-          on demand — and re-ingestion only touches the documents that actually changed.
+          I built this site as an asynchronous Retrieval-Augmented Generation pipeline: it keeps a
+          vector database in sync with the Google Docs I study from and answers your questions over them.
+          My notes are parsed (multimodally when they contain images), embedded locally, and retrieved
+          on demand, and re-ingestion only touches the documents I actually changed.
         </p>
         <div style={{
           display:"flex", flexWrap:"wrap", gap:8, padding:"14px 18px",

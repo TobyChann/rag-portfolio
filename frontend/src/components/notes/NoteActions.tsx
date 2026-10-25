@@ -20,8 +20,8 @@ export default function NoteActions({ docId, title }: { docId: string; title: st
 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 22 }}>
-      <button className="btn btn-primary" onClick={() => openChat(`What did Toby learn in ${title}?`, docId)}>
-        Ask about this note
+      <button className="btn btn-primary" onClick={() => openChat(`What did you learn in ${title}?`, docId)}>
+        Ask me about this note
       </button>
     </div>
   );

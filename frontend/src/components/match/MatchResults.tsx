@@ -4,7 +4,7 @@ import { API_BASE, ensureSession, openChat, updateVisitor } from "@/lib/api";
 import type { MatchEvidence, MatchResult, MatchRow, Verdict } from "@/types";
 
 const VERDICT_LABEL: Record<Verdict, string> = { strong: "Strong", partial: "Partial", gap: "Gap" };
-const GAP_NOTE = "Toby hasn't documented this in his notes yet.";
+const GAP_NOTE = "I haven't documented this in my notes yet.";
 
 function evidenceChips(evidence: MatchEvidence[]) {
   const seen = new Set<string>();
@@ -83,7 +83,7 @@ export default function MatchResults({ result, pending, matchId }: {
     try {
       await updateVisitor(await ensureSession(), { role_context: context });
     } catch { /* the chat still works without the role context */ }
-    openChat(`How well does Toby fit the ${role} role?`);
+    openChat(`How well do you fit the ${role} role?`);
   }
 
   return (
@@ -101,28 +101,28 @@ export default function MatchResults({ result, pending, matchId }: {
                 <span key={v} className={`verdict-seg verdict-${v}`} style={{ flexGrow: counts[v] }}>{counts[v]} {VERDICT_LABEL[v].toLowerCase()}</span>
               ))}
             </div>
-            {result.summary?.fits && <p style={{ fontSize: 14, marginTop: 10 }}><strong>Where Toby fits:</strong> {result.summary.fits}</p>}
-            {result.summary?.grow && <p style={{ fontSize: 14, marginTop: 4 }}><strong>Where Toby would grow:</strong> {result.summary.grow}</p>}
+            {result.summary?.fits && <p style={{ fontSize: 14, marginTop: 10 }}><strong>Where I fit:</strong> {result.summary.fits}</p>}
+            {result.summary?.grow && <p style={{ fontSize: 14, marginTop: 4 }}><strong>Where I&apos;d grow:</strong> {result.summary.grow}</p>}
           </>
         )}
       </div>
 
       <div role="table" aria-label="Requirements">
         <div className="match-row match-head" role="row">
-          <div role="columnheader">Requirement</div><div role="columnheader">Fit</div><div role="columnheader">Evidence from Toby&apos;s notes and resume</div>
+          <div role="columnheader">Requirement</div><div role="columnheader">Fit</div><div role="columnheader">Evidence from my notes and resume</div>
         </div>
         {result.requirements.map((req, i) => <Row key={req.id} req={req} row={rowById[req.id]} index={i} />)}
       </div>
 
       {matchId && !pending && (
         <div className="match-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 18 }}>
-          <button onClick={askAboutRole} className="btn btn-primary">Ask a follow-up about this role</button>
+          <button onClick={askAboutRole} className="btn btn-primary">Ask me about this role</button>
           <button onClick={copyLink} className="btn btn-secondary">{copied ? "Link copied" : "Copy link"}</button>
           <button onClick={() => window.print()} className="btn btn-secondary">Save as PDF</button>
         </div>
       )}
       <p style={{ fontSize: 11.5, color: "var(--fg-subtle)", marginTop: 14 }}>
-        Graded by gpt-4o-mini from evidence retrieved from Toby&apos;s notes, skills board and resume. When the evidence is thin it says so.
+        Graded by gpt-4o-mini, using only evidence from my notes, skills board and resume. Where the evidence is thin, it says so.
       </p>
     </section>
   );

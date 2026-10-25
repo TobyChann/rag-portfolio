@@ -301,7 +301,7 @@ export default function KnowledgeMap({ snapshot }: { snapshot: MapSnapshot }) {
         )}
         {!data && snapshot.points.length > 0 && (
           <svg viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet" role="img" opacity={0.7}
-               aria-label={`Knowledge map: ${snapshot.points.length} sampled passages from Toby's notes, coloured by area`}>
+               aria-label={`Knowledge map: ${snapshot.points.length} sampled passages from my notes, coloured by area`}>
             {snapshot.points.map(([x, y, m], i) => (
               <circle key={i} cx={+(0.04 + x * 0.92).toFixed(3)} cy={+(0.04 + y * 0.92).toFixed(3)} r={0.005} fill={`var(--map-${(m % 8) + 1})`} />
             ))}

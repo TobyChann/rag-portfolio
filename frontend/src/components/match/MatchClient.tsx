@@ -80,7 +80,7 @@ export default function MatchClient() {
           <span style={{ flex: 1 }} />
           {running
             ? <button type="button" className="btn btn-secondary" onClick={() => abortRef.current?.abort()}>Stop</button>
-            : <button type="submit" className="btn btn-primary" disabled={jd.trim().length < MIN}>Match Toby to this role</button>}
+            : <button type="submit" className="btn btn-primary" disabled={jd.trim().length < MIN}>See how I fit</button>}
         </div>
         {error && <p role="alert" style={{ fontSize: 13, color: "var(--danger)", marginTop: 10 }}>{error}</p>}
       </form>

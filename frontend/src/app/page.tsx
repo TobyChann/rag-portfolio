@@ -5,7 +5,6 @@ import { PROFILE, EDUCATION } from "@/lib/profile";
 import AskBox from "@/components/portfolio/AskBox";
 import HomeSections from "@/components/portfolio/HomeSections";
 import type { Portfolio } from "@/components/portfolio/ModulesSection";
-import type { SkillEvidence } from "@/types";
 import type { MapData, MapSnapshot } from "@/components/map/KnowledgeMap";
 
 export const revalidate = 300;
@@ -25,9 +24,8 @@ function ago(iso: string | null) {
 }
 
 export default async function HomePage() {
-  const [skills, evidence, portfolio, stats, resume, map] = await Promise.all([
+  const [skills, portfolio, stats, resume, map] = await Promise.all([
     serverFetch<Record<string, string[]>>("/skills", {}),
-    serverFetch<SkillEvidence[]>("/skills/evidence", []),
     serverFetch<Portfolio>("/portfolio", { folders: [], docs: [] }),
     serverFetch<PublicStats | null>("/stats/public", null),
     serverFetch<{ exists: boolean }>("/resume/meta", { exists: false }),
@@ -116,7 +114,7 @@ export default async function HomePage() {
         ))}
       </div>
 
-      <HomeSections skills={skills} evidence={evidence} portfolio={portfolio} education={education} mapSnapshot={snapshot} />
+      <HomeSections skills={skills} portfolio={portfolio} education={education} mapSnapshot={snapshot} />
     </main>
   );
 }
