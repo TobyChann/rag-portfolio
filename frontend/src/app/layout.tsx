@@ -12,7 +12,7 @@ import { PROFILE, EDUCATION, SITE_URL } from "@/lib/profile";
 const geistSans = localFont({ src: "./fonts/GeistVF.woff2", variable: "--font-geist-sans", weight: "100 900" });
 const geistMono = localFont({ src: "./fonts/GeistMonoVF.woff2", variable: "--font-geist-mono", weight: "100 900" });
 
-const description =`${PROFILE.tagline}. Ask an AI assistant grounded in his actual study notes about his skills, coursework and projects.`;
+const description = `I study ${PROFILE.tagline}. Ask my AI assistant about my skills, coursework and projects: it answers from my own study notes.`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

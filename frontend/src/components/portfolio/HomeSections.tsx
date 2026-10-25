@@ -6,16 +6,13 @@ import dynamic from "next/dynamic";
 
 // Owner-only, so visitors never download it.
 const SkillsBoard = dynamic(() => import("@/components/admin/SkillsBoard"), { ssr: false });
-import SkillChips from "@/components/portfolio/SkillChips";
 import KnowledgeMap, { type MapSnapshot } from "@/components/map/KnowledgeMap";
 import { API_BASE as API } from "@/lib/api";
-import type { SkillEvidence } from "@/types";
 
 // The server renders these with the public data; for the owner, the same
 // components hydrate and switch into Curate mode.
-export default function HomeSections({ skills: initialSkills, evidence, portfolio, education, mapSnapshot }: {
+export default function HomeSections({ skills: initialSkills, portfolio, education, mapSnapshot }: {
   skills: Record<string, string[]>;
-  evidence: SkillEvidence[];
   mapSnapshot: MapSnapshot;
   portfolio: Portfolio;
   education: React.ReactNode;
@@ -65,9 +62,8 @@ export default function HomeSections({ skills: initialSkills, evidence, portfoli
       <section style={{ marginBottom: 48 }} aria-labelledby="skills-heading">
         <h2 id="skills-heading" className="section-label" style={{ marginBottom: 20 }}>Skills pipeline</h2>
         <PipelineDiagram stages={stages} bars={bars} />
-        <SkillChips skills={evidence} />
-        <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 12 }}>
-          The number on a skill is how many of Toby&apos;s notes evidence it. Select one to see them.
+        <p style={{ fontSize: 11, color: "var(--fg-subtle)", textAlign: "center", marginTop: 10 }}>
+          Select a stage to see every tool and skill I use in it
         </p>
         {editMode && (
           <div style={{ marginTop: 16 }}>
@@ -87,8 +83,8 @@ export default function HomeSections({ skills: initialSkills, evidence, portfoli
       <section style={{ marginBottom: 48 }} aria-labelledby="map-heading">
         <h2 id="map-heading" className="section-label" style={{ marginBottom: 6 }}>Knowledge map</h2>
         <p style={{ fontSize: 14, color: "var(--fg-muted)", marginBottom: 14, lineHeight: 1.6 }}>
-          Everything Toby has studied, in one picture: each dot is a passage from the notes, placed so related
-          material sits together. Ask the chat a question and the passages behind the answer light up here.
+          Everything I&apos;ve studied, in one picture: each dot is a passage from my notes, placed so related
+          material sits together. Ask me a question and the passages behind the answer light up here.
         </p>
         <KnowledgeMap snapshot={mapSnapshot} />
       </section>

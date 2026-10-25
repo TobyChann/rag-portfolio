@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
   const c = m.summary?.counts;
   return {
     title: `${m.role_title ?? "Job match"}${m.company_guess ? ` · ${m.company_guess}` : ""}`,
-    description: c ? `Toby's fit: ${c.strong} strong, ${c.partial} partial, ${c.gap} gaps, graded from his notes and resume.` : undefined,
+    description: c ? `My fit: ${c.strong} strong, ${c.partial} partial, ${c.gap} gaps, graded from my notes and resume.` : undefined,
     robots: { index: false },
   };
 }

@@ -56,9 +56,9 @@ const DIAGRAMS: Record<C4Level, Diagram> = {
   c1: {
     width: 1000, height: 580, title: "C1 system context: RAGPortfolio",
     nodes: [
-      { id: "owner", kind: "person", x: 170, y: 20, w: 140, h: 125, title: "Owner (Toby)", desc: ["Writes notes,", "curates the site"] },
-      { id: "visitor", kind: "person", x: 690, y: 20, w: 140, h: 125, title: "Visitor", desc: ["Recruiter, hiring", "manager or peer"] },
-      { id: "system", kind: "core", x: 370, y: 250, w: 260, h: 120, title: "RAGPortfolio", tech: "[Software system]", desc: ["Portfolio site and RAG chat", "grounded in Toby's study notes"] },
+      { id: "owner", kind: "person", x: 170, y: 20, w: 140, h: 125, title: "Me (Toby)", desc: ["Write notes,", "curate the site"] },
+      { id: "visitor", kind: "person", x: 690, y: 20, w: 140, h: 125, title: "You", desc: ["Recruiter, hiring", "manager or peer"] },
+      { id: "system", kind: "core", x: 370, y: 250, w: 260, h: 120, title: "RAGPortfolio", tech: "[Software system]", desc: ["Portfolio site and RAG chat", "grounded in my study notes"] },
       { id: "drive", kind: "external", x: 30, y: 255, w: 210, h: 110, title: "Google Drive / Docs", tech: "[External]", desc: ["Source study notes"] },
       { id: "zilliz", kind: "db", x: 770, y: 250, w: 190, h: 120, title: "Zilliz Cloud", tech: "[Vector database]", desc: ["Chunk embeddings"] },
       { id: "openai", kind: "external", x: 150, y: 450, w: 220, h: 100, title: "OpenAI", tech: "[gpt-4o-mini]", desc: ["Visitor answers"] },
@@ -82,8 +82,8 @@ const DIAGRAMS: Record<C4Level, Diagram> = {
       { x: 255, y: 305, w: 490, h: 440, label: "OCI VM · docker-compose.prod.yml" },
     ],
     nodes: [
-      { id: "owner", kind: "person", x: 140, y: 12, w: 140, h: 118, title: "Owner (Toby)" },
-      { id: "visitor", kind: "person", x: 720, y: 12, w: 140, h: 118, title: "Visitor" },
+      { id: "owner", kind: "person", x: 140, y: 12, w: 140, h: 118, title: "Me (Toby)" },
+      { id: "visitor", kind: "person", x: 720, y: 12, w: 140, h: 118, title: "You" },
       { id: "frontend", kind: "core", x: 390, y: 175, w: 220, h: 100, title: "Frontend", tech: "[Vercel · Next.js 14]", desc: ["ISR pages, chat UI,", "/api proxy, /revalidate"] },
       { id: "caddy", kind: "core", x: 390, y: 330, w: 220, h: 85, title: "Caddy", tech: "[Reverse proxy]", desc: ["HTTPS, auto certificates"] },
       { id: "backend", kind: "core", x: 390, y: 455, w: 220, h: 105, title: "Backend API", tech: "[FastAPI · Python 3.11]", desc: ["RAG pipeline, ingestion,", "admin, daily delta sync"] },

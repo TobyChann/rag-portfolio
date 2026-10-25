@@ -14,11 +14,11 @@ const PROFILED_KEY = "portfolio_profiled";
 const MAX_STORED = 50;
 
 const SUGGESTED = [
-  "What has Toby studied in Accounting?",
-  "What has Toby studied in Finance?",
-  "What has Toby studied in Information Systems?",
-  "What has Toby built?",
-  "What work experience does Toby have?",
+  "What have you studied in Accounting?",
+  "What have you studied in Finance?",
+  "What have you studied in Information Systems?",
+  "What have you built?",
+  "What work experience do you have?",
 ];
 
 const ROLES = [
@@ -257,9 +257,9 @@ export default function ChatPanel({ ask, onClose }: {
       <div ref={panelRef} className="chat-panel" role="dialog" aria-modal="true" aria-labelledby="chat-title">
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <div style={{ minWidth: 0 }}>
-            <h2 id="chat-title" style={{ fontSize: 14, fontWeight: 600 }}>Ask about Toby</h2>
+            <h2 id="chat-title" style={{ fontSize: 14, fontWeight: 600 }}>Ask me anything</h2>
             <p style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 1 }}>
-              Answers from his study notes{answerModel && <> · <span className="mono">{answerModel}</span></>}
+              My AI assistant, answering from my study notes{answerModel && <> · <span className="mono">{answerModel}</span></>}
             </p>
           </div>
           <div style={{ display: "flex", gap: 2 }}>
@@ -278,7 +278,7 @@ export default function ChatPanel({ ask, onClose }: {
           {messages.length === 0 && (
             <>
               <p style={{ fontSize: 13, color: "var(--fg-muted)", lineHeight: 1.6 }}>
-                Ask anything about Toby&apos;s coursework, projects or experience. Answers cite the notes they came from, and you can ask follow-ups.
+                Ask me about my coursework, projects or experience. My assistant answers from my own notes, cites them, and you can ask follow-ups.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {SUGGESTED.map(q => (
@@ -325,7 +325,7 @@ export default function ChatPanel({ ask, onClose }: {
 
                 {msg.role === "assistant" && known.length > 0 && (
                   <div style={{ maxWidth: "94%", marginTop: 6 }}>
-                    <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>From Toby&apos;s notes</p>
+                    <p style={{ fontSize: 10, color: "var(--fg-subtle)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>From my notes</p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                       {known.map(s => (
                         <button key={s.google_doc_id} aria-expanded={isOpen(s.google_doc_id)}

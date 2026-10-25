@@ -66,7 +66,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     const actions: Item[] = [
       ...(query ? [{ kind: "action" as const, id: "ask", label: `Ask: “${query}”`, hint: "Chat",
                      run: () => { onClose(); openChat(query); } }] : []),
-      { kind: "action", id: "match", label: "Match Toby to a job description", hint: "/match", run: () => go("/match") },
+      { kind: "action", id: "match", label: "See how I fit a job description", hint: "/match", run: () => go("/match") },
       { kind: "action", id: "resume", label: "Download resume", hint: "PDF",
         run: () => { onClose(); window.location.href = `${API_BASE}/resume`; } },
       { kind: "action", id: "map", label: "Open the knowledge map", hint: "Home",
@@ -111,7 +111,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
           </svg>
           <input
             ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKeyDown}
-            placeholder="Search Toby's notes, or type a question…" maxLength={200}
+            placeholder="Search my notes, or ask me a question…" maxLength={200}
             role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
             aria-activedescendant={items.length ? optionId(active) : undefined}
           />

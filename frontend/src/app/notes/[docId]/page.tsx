@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: { docId: string } }
   if (!n) return { title: "Note not found" };
   return {
     title: `${titleOf(n)} notes`,
-    description: n.summary.slice(0, 200) || `Toby Chan's study notes for ${titleOf(n)}.`,
+    description: n.summary.slice(0, 200) || `My study notes for ${titleOf(n)}.`,
   };
 }
 
@@ -64,10 +64,10 @@ export default async function NotePageView({ params }: { params: { docId: string
             ))}
           </ol>
         ) : (
-          <p style={{ fontSize: 13.5, color: "var(--fg-muted)" }}>These notes aren&apos;t split into sections. Ask the assistant about anything in them.</p>
+          <p style={{ fontSize: 13.5, color: "var(--fg-muted)" }}>These notes aren&apos;t split into sections. Ask me about anything in them.</p>
         )}
         <p style={{ fontSize: 12, color: "var(--fg-subtle)", marginTop: 12 }}>
-          The full text isn&apos;t published here; the assistant answers from it and cites the sections it uses.
+          I don&apos;t publish the full text here, but my assistant answers from it and cites the sections it uses.
         </p>
       </section>
 
